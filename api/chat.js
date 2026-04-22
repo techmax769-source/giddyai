@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 
-// ✅ UPDATE 1: Correct API URL for the new model
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent";
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
@@ -27,7 +26,7 @@ function checkRateLimit(userId) {
   return { allowed: true };
 }
 
-// 🔍 Search MaxMovies API
+// 🔍 Search MaxMovies API with more details
 async function searchMaxMovies(query, limit = 6) {
   try {
     const searchUrl = `${MAXMOVIES_API}/search/${encodeURIComponent(query)}`;
@@ -60,6 +59,10 @@ async function searchMaxMovies(query, limit = 6) {
         typeDisplay: typeDisplay,
         rating: item.imdbRatingValue || null,
         year: item.releaseDate ? new Date(item.releaseDate).getFullYear() : null,
+        description: item.description || item.intro || null,
+        genre: item.genre || null,
+        director: item.director || null,
+        cast: item.cast ? item.cast.slice(0, 3) : null
       };
     });
     
@@ -119,7 +122,6 @@ function saveMemory(userId, memory) {
   }
 }
 
-// Check if user is asking about creator
 function isAskingAboutCreator(prompt) {
   const lower = prompt.toLowerCase();
   const creatorKeywords = [
@@ -130,7 +132,6 @@ function isAskingAboutCreator(prompt) {
   return creatorKeywords.some(keyword => lower.includes(keyword));
 }
 
-// Check if user explicitly asks for data from MaxMovies
 function isExplicitlyAskingForData(prompt) {
   const lower = prompt.toLowerCase();
   const dataKeywords = [
@@ -159,8 +160,19 @@ function getFallbackResponse(prompt, searchResults, isCreatorQuestion) {
   }
   
   if (searchResults && searchResults.length > 0) {
-    const titles = searchResults.slice(0, 3).map(r => r.title).join(", ");
-    return `🎬 Here's what I found: ${titles}. Check them out on MaxMovies! 🍿`;
+    let response = "🎬 Here's what I found for you:\n\n";
+    searchResults.slice(0, 3).forEach((result, index) => {
+      response += `**${result.title}**`;
+      if (result.year) response += ` (${result.year})`;
+      if (result.rating) response += ` ⭐ ${result.rating}`;
+      response += `\n`;
+      if (result.description) {
+        response += `${result.description.substring(0, 150)}${result.description.length > 150 ? '...' : ''}\n`;
+      }
+      response += `Type: ${result.typeDisplay}\n\n`;
+    });
+    response += `Check them out on MaxMovies! 🍿`;
+    return response;
   }
   
   return "Hey! I'm MaxMovies AI. You can ask me to search for movies, series, or music, or just chat with me! What can I help you with today? 🎬";
@@ -200,7 +212,6 @@ export default async function handler(req, res) {
     
     let searchResults = [];
     
-    // ONLY search if user explicitly asks for movie/series data
     if (explicitlyAskingForData && !isCreatorQuestion) {
       const searchTopic = extractSearchTopic(prompt);
       if (searchTopic && searchTopic.length > 2) {
@@ -212,7 +223,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Check if Gemini API key exists
     if (!process.env.GEMINI_API_KEY) {
       console.error("GEMINI_API_KEY is not set");
       const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
@@ -225,7 +235,9 @@ export default async function handler(req, res) {
           cover: item.cover,
           rating: item.rating,
           type: item.type,
-          typeDisplay: item.typeDisplay
+          typeDisplay: item.typeDisplay,
+          year: item.year,
+          description: item.description
         })),
         warning: "AI service unavailable, using fallback responses"
       });
@@ -233,11 +245,24 @@ export default async function handler(req, res) {
 
     let searchContext = "";
     if (searchResults.length > 0 && explicitlyAskingForData) {
-      const resultText = searchResults.map(r => `${r.title} (${r.typeDisplay})`).join(", ");
-      searchContext = `\n\nFound these from MaxMovies: ${resultText}\n\nONLY mention these if the user explicitly asked for movie/series information. Otherwise, ignore this data completely.`;
+      // Build detailed context for Gemini
+      let contextText = "\n\nFound these from MaxMovies database:\n";
+      searchResults.forEach((result, index) => {
+        contextText += `${index + 1}. **${result.title}**`;
+        if (result.year) contextText += ` (${result.year})`;
+        if (result.rating) contextText += ` - Rating: ${result.rating}/10`;
+        contextText += `\n   Type: ${result.typeDisplay}`;
+        if (result.description) {
+          contextText += `\n   Description: ${result.description.substring(0, 200)}`;
+        }
+        if (result.genre) contextText += `\n   Genre: ${result.genre}`;
+        if (result.director) contextText += `\n   Director: ${result.director}`;
+        if (result.cast) contextText += `\n   Cast: ${result.cast.join(', ')}`;
+        contextText += `\n   Link: ${SITE_URL}/#detail/${result.subjectId}\n\n`;
+      });
+      searchContext = contextText;
     }
 
-    // Special response for creator questions
     let creatorResponse = "";
     if (isCreatorQuestion) {
       creatorResponse = "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬";
@@ -252,23 +277,28 @@ ${searchContext}
 
 ${!searchResults.length && explicitlyAskingForData ? "No results found from MaxMovies database." : ""}
 
-RULES:
-1. ONLY provide movie/series data from MaxMovies if the user explicitly asks for it (using words like "search", "find", "recommend", "suggest", "look up", "get me", "tell me about")
-2. If the user doesn't explicitly ask for data, just have a normal conversation without mentioning any movie titles or recommendations
-3. Keep responses natural and conversational (max 2-3 sentences)
-4. Use emojis naturally
-5. Never mention "as an AI" or "language model"
-6. Stay in character as MaxMovies AI
+IMPORTANT FORMATTING RULES:
+1. **ALWAYS bold every movie/series title** using **bold text** or HTML <strong> tags
+2. For each result, provide a brief 1-2 sentence explanation about what it is
+3. Format your response like this example:
+   
+   **Movie Title** (Year) ⭐ Rating
+   Here's a quick description of what this movie is about...
+   
+   **Another Movie** (Year)
+   Brief explanation of this one...
 
-Now respond following all rules above. Keep it short and friendly.
+4. Keep explanations concise but informative
+5. Use emojis naturally
+6. Never mention "as an AI" or "language model"
+
+Now respond in a friendly, helpful way following all rules above. Make sure EVERY title is bolded.
 `;
 
-    // Add timeout to fetch
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-      // ✅ UPDATE 2: Updated request body format for Gemini 3.1 Flash-Lite
       const geminiResponse = await fetch(
         `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -282,9 +312,7 @@ Now respond following all rules above. Keep it short and friendly.
             }],
             generationConfig: {
               temperature: 0.85,
-              maxOutputTokens: 300,
-              // Optional: Add thinking config for better reasoning on complex queries
-              // thinkingConfig: { thinkingLevel: "low" } // Uncomment if needed
+              maxOutputTokens: 800,
             },
           }),
         }
@@ -296,7 +324,6 @@ Now respond following all rules above. Keep it short and friendly.
         const errorText = await geminiResponse.text();
         console.error(`Gemini API error ${geminiResponse.status}:`, errorText);
         
-        // Use fallback response
         const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
         
         return res.status(200).json({ 
@@ -307,7 +334,9 @@ Now respond following all rules above. Keep it short and friendly.
             cover: item.cover,
             rating: item.rating,
             type: item.type,
-            typeDisplay: item.typeDisplay
+            typeDisplay: item.typeDisplay,
+            year: item.year,
+            description: item.description
           })),
           warning: "AI service busy, using fallback response"
         });
@@ -328,19 +357,32 @@ Now respond following all rules above. Keep it short and friendly.
             cover: item.cover,
             rating: item.rating,
             type: item.type,
-            typeDisplay: item.typeDisplay
+            typeDisplay: item.typeDisplay,
+            year: item.year,
+            description: item.description
           })),
           warning: "AI response empty, using fallback"
         });
       }
 
-      // Clean up
+      // Clean up and ensure titles are bolded
       let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      
+      // If no bold tags exist but we have search results, manually bold titles
+      if (searchResults.length > 0 && explicitlyAskingForData && !cleanText.includes('<strong>')) {
+        searchResults.forEach(movie => {
+          if (movie.title && movie.title.length > 2) {
+            const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
+            cleanText = cleanText.replace(regex, '<strong>$1</strong>');
+          }
+        });
+      }
+      
       cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai/gi, '');
       cleanText = cleanText.replace(/Google/gi, '');
       cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
       
-      // Add clickable links ONLY if user explicitly asked for data
+      // Add clickable links to titles
       if (searchResults.length > 0 && explicitlyAskingForData) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
@@ -359,14 +401,15 @@ Now respond following all rules above. Keep it short and friendly.
       
       saveMemory(userId, memory);
 
-      // Only return recommendations if user explicitly asked for data
       const recommendations = (explicitlyAskingForData && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
         subjectId: item.subjectId,
         title: item.title,
         cover: item.cover,
         rating: item.rating,
         type: item.type,
-        typeDisplay: item.typeDisplay
+        typeDisplay: item.typeDisplay,
+        year: item.year,
+        description: item.description
       })) : [];
 
       return res.status(200).json({ 
@@ -378,7 +421,6 @@ Now respond following all rules above. Keep it short and friendly.
       clearTimeout(timeoutId);
       console.error("Fetch error:", fetchError);
       
-      // Use fallback response for any fetch errors
       const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
       
       return res.status(200).json({ 
@@ -389,7 +431,9 @@ Now respond following all rules above. Keep it short and friendly.
           cover: item.cover,
           rating: item.rating,
           type: item.type,
-          typeDisplay: item.typeDisplay
+          typeDisplay: item.typeDisplay,
+          year: item.year,
+          description: item.description
         })),
         warning: "Connection issue, using fallback response"
       });
