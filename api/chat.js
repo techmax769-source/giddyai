@@ -132,22 +132,40 @@ function isAskingAboutCreator(prompt) {
   return creatorKeywords.some(keyword => lower.includes(keyword));
 }
 
-function isExplicitlyAskingForData(prompt) {
+// Check if user is asking for any movie/series content
+function isAskingForContent(prompt) {
   const lower = prompt.toLowerCase();
-  const dataKeywords = [
-    'search', 'find', 'look up', 'show me', 'get me', 'give me',
-    'recommend', 'suggest', 'tell me about', 'what is', 'info on'
+  
+  // Keywords that indicate user wants to watch/find content
+  const contentKeywords = [
+    'watch', 'see', 'show me', 'find', 'search', 'look up', 'get me', 'give me',
+    'recommend', 'suggest', 'tell me about', 'what is', 'info on', 'movie', 'series',
+    'film', 'show', 'episode', 'season', 'stream', 'download', 'play'
   ];
   
-  return dataKeywords.some(keyword => lower.includes(keyword));
+  // Check if asking about specific titles (capitalized words often indicate titles)
+  const hasCapitalizedWords = /\b[A-Z][a-z]+ [A-Z][a-z]+\b/.test(prompt);
+  
+  return contentKeywords.some(keyword => lower.includes(keyword)) || hasCapitalizedWords;
 }
 
 function extractSearchTopic(prompt) {
-  let topic = prompt.replace(/what is|tell me about|info on|search for|find|look up|show me|recommend|suggest|best|good|top|movie|series|film|show/gi, '');
+  // Remove common question words and keep the main topic
+  let topic = prompt.replace(/what is|tell me about|info on|search for|find|look up|show me|recommend|suggest|best|good|top|movie|series|film|show|watch|see|stream|download|play/gi, '');
   topic = topic.replace(/about/gi, '');
+  topic = topic.replace(/[?]/g, '');
   topic = topic.trim();
-  if (topic.length < 2) return null;
-  return topic;
+  
+  // If topic is too short, check if there's a quoted phrase or capitalized words
+  if (topic.length < 2) {
+    const quotedMatch = prompt.match(/["']([^"']+)["']/);
+    if (quotedMatch) return quotedMatch[1];
+    
+    const capitalizedMatch = prompt.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/);
+    if (capitalizedMatch) return capitalizedMatch[1];
+  }
+  
+  return topic.length >= 2 ? topic : null;
 }
 
 function escapeRegex(string) {
@@ -208,16 +226,20 @@ export default async function handler(req, res) {
     memory.conversation.push({ role: "user", content: prompt });
 
     const isCreatorQuestion = isAskingAboutCreator(prompt);
-    const explicitlyAskingForData = isExplicitlyAskingForData(prompt);
+    const askingForContent = isAskingForContent(prompt);
     
     let searchResults = [];
     
-    if (explicitlyAskingForData && !isCreatorQuestion) {
+    // ALWAYS search if user is asking for content (any format)
+    if (askingForContent && !isCreatorQuestion) {
       const searchTopic = extractSearchTopic(prompt);
+      console.log(`Searching for: "${searchTopic}" from prompt: "${prompt}"`);
+      
       if (searchTopic && searchTopic.length > 2) {
         searchResults = await searchMaxMovies(searchTopic, 6);
       }
       
+      // If no results found with specific search, try popular content
       if (searchResults.length === 0 && searchTopic) {
         searchResults = await searchMaxMovies('popular', 6);
       }
@@ -244,7 +266,7 @@ export default async function handler(req, res) {
     }
 
     let searchContext = "";
-    if (searchResults.length > 0 && explicitlyAskingForData) {
+    if (searchResults.length > 0 && askingForContent) {
       // Build detailed context for Gemini
       let contextText = "\n\nFound these from MaxMovies database:\n";
       searchResults.forEach((result, index) => {
@@ -275,7 +297,7 @@ ${creatorResponse ? `SPECIAL INSTRUCTION: Answer with exactly: "${creatorRespons
 
 ${searchContext}
 
-${!searchResults.length && explicitlyAskingForData ? "No results found from MaxMovies database." : ""}
+${!searchResults.length && askingForContent ? "No results found from MaxMovies database." : ""}
 
 IMPORTANT FORMATTING RULES:
 1. **ALWAYS bold every movie/series title** using **bold text** or HTML <strong> tags
@@ -369,7 +391,7 @@ Now respond in a friendly, helpful way following all rules above. Make sure EVER
       let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       
       // If no bold tags exist but we have search results, manually bold titles
-      if (searchResults.length > 0 && explicitlyAskingForData && !cleanText.includes('<strong>')) {
+      if (searchResults.length > 0 && askingForContent && !cleanText.includes('<strong>')) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
             const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
@@ -383,7 +405,7 @@ Now respond in a friendly, helpful way following all rules above. Make sure EVER
       cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
       
       // Add clickable links to titles
-      if (searchResults.length > 0 && explicitlyAskingForData) {
+      if (searchResults.length > 0 && askingForContent) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
             const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
@@ -401,16 +423,18 @@ Now respond in a friendly, helpful way following all rules above. Make sure EVER
       
       saveMemory(userId, memory);
 
-      const recommendations = (explicitlyAskingForData && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
-        subjectId: item.subjectId,
-        title: item.title,
-        cover: item.cover,
-        rating: item.rating,
-        type: item.type,
-        typeDisplay: item.typeDisplay,
-        year: item.year,
-        description: item.description
-      })) : [];
+      // ALWAYS return recommendations when content was found, regardless of how user asked
+      const recommendations = (askingForContent && !isCreatorQuestion && searchResults.length > 0) ? 
+        searchResults.slice(0, 6).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay,
+          year: item.year,
+          description: item.description
+        })) : [];
 
       return res.status(200).json({ 
         reply: cleanText,
@@ -425,16 +449,17 @@ Now respond in a friendly, helpful way following all rules above. Make sure EVER
       
       return res.status(200).json({ 
         reply: fallbackReply,
-        recommendations: searchResults.slice(0, 6).map(item => ({
-          subjectId: item.subjectId,
-          title: item.title,
-          cover: item.cover,
-          rating: item.rating,
-          type: item.type,
-          typeDisplay: item.typeDisplay,
-          year: item.year,
-          description: item.description
-        })),
+        recommendations: (askingForContent && !isCreatorQuestion && searchResults.length > 0) ?
+          searchResults.slice(0, 6).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay,
+            year: item.year,
+            description: item.description
+          })) : [],
         warning: "Connection issue, using fallback response"
       });
     }
@@ -442,7 +467,7 @@ Now respond in a friendly, helpful way following all rules above. Make sure EVER
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! Something went wrong, but I'm still here! What movie are you looking for? 🎬",
+      reply: "Hey! Something went wrong, but I'm still here! What movie are you looking for? ",
       error: err.message
     });
   }
