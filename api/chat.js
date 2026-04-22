@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent";
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
 
@@ -26,31 +26,8 @@ function checkRateLimit(userId) {
   return { allowed: true };
 }
 
-// Detect language of user prompt
-function detectLanguage(prompt) {
-  const swahiliWords = ['habari', 'sasa', 'vipi', 'mambo', 'poa', 'fiti', 'safi', 'kabisa', 'ndio', 'hapana', 'tafadhali', 'asante', 'karibu', 'samahani', 'njema', 'nzuri', 'mbaya', 'kubwa', 'ndogo', 'kwa', 'heri', 'leo', 'jana', 'kesho', 'wewe', 'mimi', 'yeye', 'wetu', 'wenu', 'wao', 'hapa', 'huko', 'kuanzia', 'kumaliza', 'kuwa', 'na', 'kwa', 'kutoka', 'mpaka', 'kabla', 'baada', 'wakati', 'kama', 'lakini', 'au', 'kwa sababu', 'hivyo', 'kuwa', 'kuwa na', 'kufanya', 'kusema', 'kwenda', 'kuja', 'kuona', 'kutoa', 'kuchukua'];
-  
-  const shengWords = ['fit', 'kuu', 'mbogi', 'msee', 'mzeiya', 'genge', 'manzi', 'dem', 'buda', 'bro', 'fam', 'kabambe', 'kabisa', 'uruhu', 'wacha', 'noma', 'mbaya', 'sawa', 'mambo', 'vipi', 'poa', 'fresku', 'freshi', 'bangi', 'mathe', 'guvnor', 'boss', 'ganji', 'dooh', 'pesa', 'ngata', 'mtaa', 'estate', 'base', 'baze', 'kwao', 'kwetu', 'kwenu', 'kwao', 'mob', 'mobeti', 'mzinga', 'mzuka', 'ngoma', 'mdundo', 'kiherehere', 'kiburi', 'kijinga', 'kipusa'];
-  
-  const lowerPrompt = prompt.toLowerCase();
-  
-  for (const word of shengWords) {
-    if (lowerPrompt.includes(word)) {
-      return 'sheng';
-    }
-  }
-  
-  for (const word of swahiliWords) {
-    if (lowerPrompt.includes(word)) {
-      return 'swahili';
-    }
-  }
-  
-  return 'english';
-}
-
 // 🔍 Search MaxMovies API
-async function searchMaxMovies(query, limit = 6) {
+async function searchMaxMovies(query, limit = 5) {
   try {
     const searchUrl = `${MAXMOVIES_API}/search/${encodeURIComponent(query)}`;
     const response = await fetch(searchUrl);
@@ -106,61 +83,25 @@ function loadMemory(userId) {
     conversation: [
       {
         role: "system",
-        content: `You are MaxMovies AI, a jovial movie buddy who knows everything about MaxMovies website.
+        content: `You are MaxMovies AI, a jovial movie buddy.
 
-🚨 CRITICAL IDENTITY RULES:
-- Your name is "MaxMovies AI" - NOTHING else
-- When asked "what is your name" or "who are you", ALWAYS say: "I'm MaxMovies AI, your movie buddy! 🎬"
-- NEVER say "Gemini", "Google", "Bard", or any other AI name
-- You were created by "Max, a 21-year-old developer from Kenya" - be specific with this exact info when asked about creator
-- When asked "who made you" or "who created you", ALWAYS say: "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬"
-
-🚨 YOUR PERSONALITY:
-- Name: MaxMovies AI (never call yourself anything else)
-- Personality: Jovial, friendly
-- Use emojis freely: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵
-- NEVER use formal/robotic language - be casual like a friend
-- NEVER say "as an AI" or "language model" - just be natural
+🚨 YOUR IDENTITY & PERSONALITY:
+- Name: MaxMovies AI (NEVER say you're Gemini or Google)
+- Your creator: Max, a 21-year-old developer from Kenya
+- Personality: Jovial, friendly, helpful
+- Use emojis: 🎬 🍿 🔥 💯 😎
+- NEVER say "as an AI" or "language model"
 
 📌 WHAT YOU KNOW ABOUT MAXMOVIES WEBSITE:
 
-Website Name: MaxMovies
-Tagline: Premium Stream/Download
-URL: ${SITE_URL}
+Website: MaxMovies (${SITE_URL})
+- Stream movies and TV series
+- Download content
+- Music Zone
+- Live TV
+- Free to use, no account needed
 
-FEATURES:
-- Stream movies and TV series in HD (360p to 1080p)
-- Download content for offline (dedicated app with download manager coming soon!)
-- Music Zone with 9 genres: Classical, Reggaetone, RnB, Arbantone, Gengetone, Afro Beats, Pop, Gospel, Instrumental
-- Live TV channels
-- Personal library to save favorites
-- Search for movies, series, and music
-- Recently watched tracking
-- Season/episode management for series
-- Multiple quality options
-- Subtitle support
-- Trending Now section
-- Upcoming releases
-
-HOW TO USE:
-- Streaming: Click any card → Stream button → Pick quality
-- Downloads: Same as stream but click Download (opens in new tab for now)
-- Music: Click Music Zone from menu → Pick genre or search
-- Library: Click 'My List' button on any content
-- Search: Use search bar at top
-- Continue watching: Progress saves automatically!
-
-FAQ:
-- Free? YES! 100% free, no subscription, no account needed
-- Account? No account required - everything saves in browser
-- App? Coming soon! Check Downloads page for countdown
-- Subtitles? Yes, look for Subtitles button in player
-- Download app? Being developed - check countdown on Downloads page
-
-MUSIC GENRES DETAILS:
-Classical 🎻, Reggaetone 🎤, RnB 🎸, Arbantone 🎧, Gengetone 🥁, Afro Beats 🪘, Pop 🎹, Gospel 🙏, Instrumental 🎺
-
-Be helpful, energetic, and make every conversation feel like talking to a friend who loves movies! 🍿`,
+Be helpful, energetic, and KNOW YOUR NAME AND CREATOR. 🎬`,
       },
     ],
   };
@@ -175,56 +116,98 @@ function saveMemory(userId, memory) {
   }
 }
 
-// Check if user is asking about identity/name/creator
+// Check if user is asking about identity/creator
 function isAskingAboutIdentity(prompt) {
   const lower = prompt.toLowerCase();
   
+  // Name related questions
   const nameKeywords = [
-    'what is your name', 'who are you', 'your name', 'call you', 'name?'
+    'what is your name', 'your name', 'who are you', 'call you', 
+    'what are you', 'introduce yourself', 'tell me about yourself'
   ];
   
+  // Creator related questions
   const creatorKeywords = [
     'who made you', 'who built you', 'who created you', 'your creator',
     'who developed you', 'who programmed you', 'who is your maker',
     'who wrote you', 'who designed you', 'who made maxmovies ai',
-    'developer', 'created you', 'built you'
+    'your developer', 'who is max'
   ];
   
-  return {
-    isAskingName: nameKeywords.some(keyword => lower.includes(keyword)),
-    isAskingCreator: creatorKeywords.some(keyword => lower.includes(keyword))
-  };
+  return nameKeywords.some(keyword => lower.includes(keyword)) || 
+         creatorKeywords.some(keyword => lower.includes(keyword));
 }
 
-// Check if user explicitly asks for data from MaxMovies
-function isExplicitlyAskingForData(prompt) {
+function getIdentityResponse(prompt) {
   const lower = prompt.toLowerCase();
-  const identityCheck = isAskingAboutIdentity(prompt);
   
-  // If asking about identity, don't treat as data request
-  if (identityCheck.isAskingName || identityCheck.isAskingCreator) {
-    return false;
+  // Name questions
+  if (lower.includes('what is your name') || lower.includes('your name') || 
+      lower.includes('who are you') || lower.includes('call you')) {
+    return "I'm MaxMovies AI! Your friendly movie buddy from MaxMovies website. 🎬";
   }
   
-  const dataKeywords = [
-    'search', 'find', 'look up', 'show me', 'get me', 'give me',
-    'recommend', 'suggest', 'tell me about', 'what is', 'info on',
-    'movie', 'series', 'film', 'show', 'watch', 'music', 'genre'
+  // Creator questions
+  if (lower.includes('who made you') || lower.includes('who created you') || 
+      lower.includes('your creator') || lower.includes('who built you') ||
+      lower.includes('who developed you') || lower.includes('who is max')) {
+    return "I was created by Max, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
+  }
+  
+  // General intro
+  return "I'm MaxMovies AI, your movie buddy from MaxMovies website! Created by Max, a 21-year-old dev from Kenya. What movie are we watching today? 🎬";
+}
+
+// Check if user is asking for movie/series content
+function isAskingForContent(prompt) {
+  const lower = prompt.toLowerCase();
+  
+  // Skip if asking about identity
+  if (isAskingAboutIdentity(prompt)) return false;
+  
+  const contentKeywords = [
+    'watch', 'see', 'show me', 'find', 'search', 'look up', 'get me', 'give me',
+    'recommend', 'suggest', 'tell me about', 'movie', 'series', 'film', 'show',
+    'episode', 'season', 'stream', 'download', 'play', 'action', 'comedy', 
+    'drama', 'horror', 'thriller', 'sci-fi', 'romance', 'documentary'
   ];
   
-  return dataKeywords.some(keyword => lower.includes(keyword));
+  return contentKeywords.some(keyword => lower.includes(keyword));
 }
 
 function extractSearchTopic(prompt) {
-  let topic = prompt.replace(/what is|tell me about|info on|search for|find|look up|show me|recommend|suggest|best|good|top|movie|series|film|show/gi, '');
-  topic = topic.replace(/about/gi, '');
+  let topic = prompt.replace(/what is|tell me about|search for|find|look up|show me|recommend|suggest|watch|see|stream|download|play/gi, '');
+  topic = topic.replace(/movie|series|film|show/gi, '');
+  topic = topic.replace(/[?]/g, '');
   topic = topic.trim();
+  
   if (topic.length < 2) return null;
   return topic;
 }
 
 function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getFallbackResponse(prompt, searchResults, isIdentityQuestion) {
+  if (isIdentityQuestion) {
+    return getIdentityResponse(prompt);
+  }
+  
+  if (searchResults && searchResults.length > 0) {
+    let response = "🎬 Here's what I found:\n\n";
+    searchResults.slice(0, 3).forEach((result, index) => {
+      response += `**${result.title}**`;
+      if (result.year) response += ` (${result.year})`;
+      if (result.rating) response += ` ⭐ ${result.rating}`;
+      response += `\n`;
+      response += `Type: ${result.typeDisplay}\n\n`;
+    });
+    response += `Tap any thumbnail below to watch! 🍿`;
+    return response;
+  }
+  
+  return "Hey! I'm MaxMovies AI. Ask me to find a movie or series for you! 🎬";
 }
 
 export default async function handler(req, res) {
@@ -248,151 +231,228 @@ export default async function handler(req, res) {
     const rateCheck = checkRateLimit(userId);
     if (!rateCheck.allowed) {
       return res.status(429).json({ 
-        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!` 
+        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!`,
+        reply: `⏰ Please wait ${rateCheck.waitTime} seconds before sending another message.`
       });
     }
 
     let memory = loadMemory(userId);
     memory.conversation.push({ role: "user", content: prompt });
 
-    const identityCheck = isAskingAboutIdentity(prompt);
-    const explicitlyAskingForData = isExplicitlyAskingForData(prompt);
-    const detectedLanguage = detectLanguage(prompt);
+    const isIdentityQuestion = isAskingAboutIdentity(prompt);
+    const askingForContent = isAskingForContent(prompt);
     
     let searchResults = [];
     
-    // ONLY search if user explicitly asks for movie/series data AND not asking about identity
-    if (explicitlyAskingForData && !identityCheck.isAskingName && !identityCheck.isAskingCreator) {
+    // ONLY search for content if not asking about identity
+    if (askingForContent && !isIdentityQuestion) {
       const searchTopic = extractSearchTopic(prompt);
+      console.log(`Searching for: "${searchTopic}"`);
+      
       if (searchTopic && searchTopic.length > 2) {
-        searchResults = await searchMaxMovies(searchTopic, 6);
+        searchResults = await searchMaxMovies(searchTopic, 5);
       }
       
-      if (searchResults.length === 0) {
-        searchResults = await searchMaxMovies('popular', 6);
+      if (searchResults.length === 0 && searchTopic) {
+        searchResults = await searchMaxMovies('popular', 5);
       }
+    }
+
+    // Handle identity questions immediately without API call
+    if (isIdentityQuestion) {
+      const identityReply = getIdentityResponse(prompt);
+      
+      memory.conversation.push({ role: "assistant", content: identityReply });
+      if (memory.conversation.length > 20) {
+        memory.conversation = memory.conversation.slice(-18);
+      }
+      saveMemory(userId, memory);
+      
+      return res.status(200).json({ 
+        reply: identityReply,
+        recommendations: []
+      });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is not set");
+      const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+      
+      return res.status(200).json({ 
+        reply: fallbackReply,
+        recommendations: searchResults.slice(0, 5).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay,
+          year: item.year
+        }))
+      });
     }
 
     let searchContext = "";
-    if (searchResults.length > 0 && explicitlyAskingForData) {
-      searchContext = `\n\nFound these from MaxMovies: ${JSON.stringify(searchResults)}\n\nONLY mention these if the user explicitly asked for movie/series information. Otherwise, ignore this data completely.`;
-    }
-
-    // Special responses for identity questions
-    let identityResponse = "";
-    if (identityCheck.isAskingName) {
-      identityResponse = "I'm MaxMovies AI, your movie buddy! 🎬";
-    } else if (identityCheck.isAskingCreator) {
-      identityResponse = "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬";
+    if (searchResults.length > 0 && askingForContent) {
+      let contextText = "\n\nFound these from MaxMovies:\n";
+      searchResults.forEach((result, index) => {
+        contextText += `${index + 1}. **${result.title}**`;
+        if (result.year) contextText += ` (${result.year})`;
+        if (result.rating) contextText += ` - ⭐${result.rating}`;
+        contextText += `\n   ${result.typeDisplay}\n`;
+      });
+      searchContext = contextText;
     }
 
     const promptText = `
 User asked: "${prompt}"
 
-LANGUAGE REQUIREMENT (STRICT - DO NOT IGNORE):
-The user is speaking in ${detectedLanguage.toUpperCase()}. You MUST respond in ${detectedLanguage.toUpperCase()} ONLY. 
-- If ${detectedLanguage} is 'english': Respond in English
-- If ${detectedLanguage} is 'swahili': Respond in Swahili ONLY (no English or Sheng mixed in)
-- If ${detectedLanguage} is 'sheng': Respond in Sheng ONLY (Kenyan urban slang)
-
-DO NOT mix languages. Stick to ONE language strictly as detected above.
-
-${identityResponse ? `IDENTITY QUESTION DETECTED: Answer with EXACTLY: "${identityResponse}" in ${detectedLanguage}. DO NOT add any movie recommendations, search results, or extra content. Just this exact answer.` : ""}
-
 ${searchContext}
 
-${!searchResults.length && explicitlyAskingForData ? "No results found from MaxMovies database." : ""}
+${!searchResults.length && askingForContent ? "No results found." : ""}
 
-RULES:
-1. If the user asks for your name or who you are, ONLY respond with your name - no extra content
-2. If the user asks who created you, ONLY respond with creator info - no extra content
-3. ONLY provide movie/series data from MaxMovies if the user explicitly asks for it (using words like "search", "find", "recommend", "suggest", "look up", "get me", "tell me about")
-4. If the user doesn't explicitly ask for data, just have a normal conversation without mentioning any movie titles or recommendations
-5. Keep responses natural and conversational
-6. Use emojis naturally
-7. Never mention "as an AI" or "language model"
-8. Stay in character as MaxMovies AI
+STRICT RULES:
+1. Keep response SHORT - max 2 sentences total
+2. **Bold movie/series titles** using **title**
+3. NO long descriptions, NO paragraphs
+4. Just say: "Here's **Movie Title** (Year) - [1 short phrase about it]"
+5. Use emojis sparingly
+6. NEVER mention being an AI
 
-Now respond in ${detectedLanguage.toUpperCase()} ONLY, following all rules above.
+Example response: "🎬 Here's **Inception** (2010) - Mind-bending thriller about dream thieves. Check the thumbnails below!"
+
+Now respond briefly:
 `;
 
-    const geminiResponse = await fetch(
-      `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: promptText }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 500,
-          },
-        }),
-      }
-    );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    if (!geminiResponse.ok) {
-      return res.status(503).json({ 
-        reply: "Whoops! Server busy. Try again later!",
-        error: "Whoops! Server busy. Try again later!" 
-      });
-    }
-
-    const result = await geminiResponse.json();
-    let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    if (!fullResponse) {
-      return res.status(503).json({ 
-        reply: "Whoops! Server busy. Try again later!",
-        error: "Whoops! Server busy. Try again later!" 
-      });
-    }
-
-    // Clean up
-    let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai/gi, '');
-    cleanText = cleanText.replace(/Google/gi, '');
-    cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
-    
-    // Add clickable links ONLY if user explicitly asked for data and we have results
-    if (searchResults.length > 0 && explicitlyAskingForData && !identityCheck.isAskingName && !identityCheck.isAskingCreator) {
-      searchResults.forEach(movie => {
-        if (movie.title && movie.title.length > 2) {
-          const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
-          const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
-          cleanText = cleanText.replace(boldPattern, link);
+    try {
+      const geminiResponse = await fetch(
+        `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ 
+              role: "user", 
+              parts: [{ text: promptText }] 
+            }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 150,
+            },
+          }),
         }
+      );
+
+      clearTimeout(timeoutId);
+
+      if (!geminiResponse.ok) {
+        const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+        
+        return res.status(200).json({ 
+          reply: fallbackReply,
+          recommendations: searchResults.slice(0, 5).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay,
+            year: item.year
+          }))
+        });
+      }
+
+      const result = await geminiResponse.json();
+      let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+      if (!fullResponse) {
+        const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+        
+        return res.status(200).json({ 
+          reply: fallbackReply,
+          recommendations: searchResults.slice(0, 5).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay,
+            year: item.year
+          }))
+        });
+      }
+
+      // Clean up
+      let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai|gemini|google/gi, '');
+      cleanText = cleanText.replace(/MaxMovies AI/gi, 'MaxMovies AI');
+      
+      // Add clickable links
+      if (searchResults.length > 0 && askingForContent) {
+        searchResults.forEach(movie => {
+          if (movie.title && movie.title.length > 2) {
+            const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
+            const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
+            cleanText = cleanText.replace(boldPattern, link);
+          }
+        });
+      }
+      
+      memory.conversation.push({ role: "assistant", content: cleanText });
+      
+      if (memory.conversation.length > 20) {
+        memory.conversation = memory.conversation.slice(-18);
+      }
+      
+      saveMemory(userId, memory);
+
+      // Return recommendations when content found
+      const recommendations = (askingForContent && searchResults.length > 0) ? 
+        searchResults.slice(0, 5).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay,
+          year: item.year
+        })) : [];
+
+      return res.status(200).json({ 
+        reply: cleanText,
+        recommendations: recommendations
+      });
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      console.error("Fetch error:", fetchError);
+      
+      const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+      
+      return res.status(200).json({ 
+        reply: fallbackReply,
+        recommendations: (askingForContent && searchResults.length > 0) ?
+          searchResults.slice(0, 5).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay,
+            year: item.year
+          })) : []
       });
     }
-    
-    memory.conversation.push({ role: "assistant", content: cleanText });
-    
-    if (memory.conversation.length > 20) {
-      memory.conversation = memory.conversation.slice(-18);
-    }
-    
-    saveMemory(userId, memory);
-
-    // Only return recommendations if user explicitly asked for data and not asking about identity
-    const recommendations = (explicitlyAskingForData && !identityCheck.isAskingName && !identityCheck.isAskingCreator) ? searchResults.slice(0, 6).map(item => ({
-      subjectId: item.subjectId,
-      title: item.title,
-      cover: item.cover,
-      rating: item.rating,
-      type: item.type,
-      typeDisplay: item.typeDisplay
-    })) : [];
-
-    return res.status(200).json({ 
-      reply: cleanText,
-      recommendations: recommendations
-    });
     
   } catch (err) {
     console.error("Server error:", err);
-    return res.status(503).json({ 
-      reply: "Whoops! Server busy. Try again later!",
-      error: "Whoops! Server busy. Try again later!" 
+    return res.status(200).json({ 
+      reply: "Hey! I'm MaxMovies AI. What movie are you looking for? 🎬",
+      error: err.message
     });
   }
 }
