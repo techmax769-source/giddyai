@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+// ✅ UPDATE 1: Correct API URL for the new model
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent";
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
 
@@ -152,6 +153,19 @@ function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function getFallbackResponse(prompt, searchResults, isCreatorQuestion) {
+  if (isCreatorQuestion) {
+    return "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬";
+  }
+  
+  if (searchResults && searchResults.length > 0) {
+    const titles = searchResults.slice(0, 3).map(r => r.title).join(", ");
+    return `🎬 Here's what I found: ${titles}. Check them out on MaxMovies! 🍿`;
+  }
+  
+  return "Hey! I'm MaxMovies AI. You can ask me to search for movies, series, or music, or just chat with me! What can I help you with today? 🎬";
+}
+
 export default async function handler(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -173,7 +187,8 @@ export default async function handler(req, res) {
     const rateCheck = checkRateLimit(userId);
     if (!rateCheck.allowed) {
       return res.status(429).json({ 
-        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!` 
+        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!`,
+        reply: `⏰ Please wait ${rateCheck.waitTime} seconds before sending another message.`
       });
     }
 
@@ -192,14 +207,34 @@ export default async function handler(req, res) {
         searchResults = await searchMaxMovies(searchTopic, 6);
       }
       
-      if (searchResults.length === 0) {
+      if (searchResults.length === 0 && searchTopic) {
         searchResults = await searchMaxMovies('popular', 6);
       }
     }
 
+    // Check if Gemini API key exists
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is not set");
+      const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
+      
+      return res.status(200).json({ 
+        reply: fallbackReply,
+        recommendations: searchResults.slice(0, 6).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay
+        })),
+        warning: "AI service unavailable, using fallback responses"
+      });
+    }
+
     let searchContext = "";
     if (searchResults.length > 0 && explicitlyAskingForData) {
-      searchContext = `\n\nFound these from MaxMovies: ${JSON.stringify(searchResults)}\n\nONLY mention these if the user explicitly asked for movie/series information. Otherwise, ignore this data completely.`;
+      const resultText = searchResults.map(r => `${r.title} (${r.typeDisplay})`).join(", ");
+      searchContext = `\n\nFound these from MaxMovies: ${resultText}\n\nONLY mention these if the user explicitly asked for movie/series information. Otherwise, ignore this data completely.`;
     }
 
     // Special response for creator questions
@@ -220,91 +255,151 @@ ${!searchResults.length && explicitlyAskingForData ? "No results found from MaxM
 RULES:
 1. ONLY provide movie/series data from MaxMovies if the user explicitly asks for it (using words like "search", "find", "recommend", "suggest", "look up", "get me", "tell me about")
 2. If the user doesn't explicitly ask for data, just have a normal conversation without mentioning any movie titles or recommendations
-3. Keep responses natural and conversational
+3. Keep responses natural and conversational (max 2-3 sentences)
 4. Use emojis naturally
 5. Never mention "as an AI" or "language model"
 6. Stay in character as MaxMovies AI
 
-Now respond following all rules above.
+Now respond following all rules above. Keep it short and friendly.
 `;
 
-    const geminiResponse = await fetch(
-      `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: promptText }] }],
-          generationConfig: {
-            temperature: 0.85,
-            maxOutputTokens: 500,
-          },
-        }),
-      }
-    );
+    // Add timeout to fetch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
 
-    if (!geminiResponse.ok) {
-      return res.status(503).json({ 
-        reply: "Whoops! Server busy. Try again later!",
-        error: "Whoops! Server busy. Try again later!" 
-      });
-    }
-
-    const result = await geminiResponse.json();
-    let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    if (!fullResponse) {
-      return res.status(503).json({ 
-        reply: "Whoops! Server busy. Try again later!",
-        error: "Whoops! Server busy. Try again later!" 
-      });
-    }
-
-    // Clean up
-    let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai/gi, '');
-    cleanText = cleanText.replace(/Google/gi, '');
-    cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
-    
-    // Add clickable links ONLY if user explicitly asked for data
-    if (searchResults.length > 0 && explicitlyAskingForData) {
-      searchResults.forEach(movie => {
-        if (movie.title && movie.title.length > 2) {
-          const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
-          const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
-          cleanText = cleanText.replace(boldPattern, link);
+    try {
+      // ✅ UPDATE 2: Updated request body format for Gemini 3.1 Flash-Lite
+      const geminiResponse = await fetch(
+        `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ 
+              role: "user", 
+              parts: [{ text: promptText }] 
+            }],
+            generationConfig: {
+              temperature: 0.85,
+              maxOutputTokens: 300,
+              // Optional: Add thinking config for better reasoning on complex queries
+              // thinkingConfig: { thinkingLevel: "low" } // Uncomment if needed
+            },
+          }),
         }
+      );
+
+      clearTimeout(timeoutId);
+
+      if (!geminiResponse.ok) {
+        const errorText = await geminiResponse.text();
+        console.error(`Gemini API error ${geminiResponse.status}:`, errorText);
+        
+        // Use fallback response
+        const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
+        
+        return res.status(200).json({ 
+          reply: fallbackReply,
+          recommendations: searchResults.slice(0, 6).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay
+          })),
+          warning: "AI service busy, using fallback response"
+        });
+      }
+
+      const result = await geminiResponse.json();
+      let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+      if (!fullResponse) {
+        console.error("Empty response from Gemini");
+        const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
+        
+        return res.status(200).json({ 
+          reply: fallbackReply,
+          recommendations: searchResults.slice(0, 6).map(item => ({
+            subjectId: item.subjectId,
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            type: item.type,
+            typeDisplay: item.typeDisplay
+          })),
+          warning: "AI response empty, using fallback"
+        });
+      }
+
+      // Clean up
+      let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai/gi, '');
+      cleanText = cleanText.replace(/Google/gi, '');
+      cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
+      
+      // Add clickable links ONLY if user explicitly asked for data
+      if (searchResults.length > 0 && explicitlyAskingForData) {
+        searchResults.forEach(movie => {
+          if (movie.title && movie.title.length > 2) {
+            const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
+            const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
+            cleanText = cleanText.replace(boldPattern, link);
+          }
+        });
+      }
+      
+      memory.conversation.push({ role: "assistant", content: cleanText });
+      
+      if (memory.conversation.length > 20) {
+        memory.conversation = memory.conversation.slice(-18);
+      }
+      
+      saveMemory(userId, memory);
+
+      // Only return recommendations if user explicitly asked for data
+      const recommendations = (explicitlyAskingForData && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
+        subjectId: item.subjectId,
+        title: item.title,
+        cover: item.cover,
+        rating: item.rating,
+        type: item.type,
+        typeDisplay: item.typeDisplay
+      })) : [];
+
+      return res.status(200).json({ 
+        reply: cleanText,
+        recommendations: recommendations
+      });
+      
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      console.error("Fetch error:", fetchError);
+      
+      // Use fallback response for any fetch errors
+      const fallbackReply = getFallbackResponse(prompt, searchResults, isCreatorQuestion);
+      
+      return res.status(200).json({ 
+        reply: fallbackReply,
+        recommendations: searchResults.slice(0, 6).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay
+        })),
+        warning: "Connection issue, using fallback response"
       });
     }
-    
-    memory.conversation.push({ role: "assistant", content: cleanText });
-    
-    if (memory.conversation.length > 20) {
-      memory.conversation = memory.conversation.slice(-18);
-    }
-    
-    saveMemory(userId, memory);
-
-    // Only return recommendations if user explicitly asked for data
-    const recommendations = (explicitlyAskingForData && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
-      subjectId: item.subjectId,
-      title: item.title,
-      cover: item.cover,
-      rating: item.rating,
-      type: item.type,
-      typeDisplay: item.typeDisplay
-    })) : [];
-
-    return res.status(200).json({ 
-      reply: cleanText,
-      recommendations: recommendations
-    });
     
   } catch (err) {
     console.error("Server error:", err);
-    return res.status(503).json({ 
-      reply: "Whoops! Server busy. Try again later!",
-      error: "Whoops! Server busy. Try again later!" 
+    return res.status(200).json({ 
+      reply: "Hey! Something went wrong, but I'm still here! What movie are you looking for? 🎬",
+      error: err.message
     });
   }
 }
