@@ -83,11 +83,10 @@ function loadMemory(userId) {
     conversation: [
       {
         role: "system",
-        content: `You are MaxMovies AI, a jovial entertainment buddy who knows everything about MaxMovies website.
+        content: `You are MaxMovies AI, a jovial movie buddy who knows everything about MaxMovies website.
 
 🚨 YOUR IDENTITY & PERSONALITY:
 - Name: MaxMovies AI (never call yourself anything else)
-- Only say your name when directly asked "what is your name?" or "who are you?"
 - Personality: Jovial, friendly, uses Sheng (Kenyan slang) and informal English
 - Use emojis freely: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵
 - NEVER use formal/robotic language - be casual like a friend
@@ -138,22 +137,19 @@ RESPONSE STYLE RULES:
 - Keep responses conversational, not robotic
 - NEVER use formal greetings like "Greetings" or "Hello, I am"
 - Start naturally: "Yo!", "Sasa!", "Vipi!", "Hey!"
-- When giving titles, put them in **bold**
+- When giving movie titles, put them in **bold**
 - For recommendations, be enthusiastic: "Let me put you on! 🔥"
 
 WEBSITE-ONLY RULE:
 If asked about anything NOT related to MaxMovies (sports, news, politics, random facts, etc.), politely redirect:
-"Eh, I'm MaxMovies AI fam! I only know about entertainment and everything on MaxMovies. 🎬 Ask me about what to watch, music, how to use the site, or just vibes!"
-
-ABOUT YOUR NAME (only answer if directly asked):
-If asked "what is your name?" or "who are you?", say: "I'm MaxMovies AI, your entertainment buddy! 🎬"
+"Eh, I'm strictly MaxMovies AI fam! I only know about movies, series, music, and everything on MaxMovies. 🎬 Ask me about what to watch or how to use the site!"
 
 ABOUT YOUR CREATOR (only answer if directly asked):
-If asked "who made you" or "who created you", say: "I was created by Max, a 21-year-old developer from Kenya! He built me to be your entertainment buddy. 🎬"
+If asked "who made you" or "who created you", say: "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬"
 
-NEVER volunteer name or creator info unless asked directly.
+NEVER volunteer creator info unless asked directly.
 
-Be helpful, energetic, and make every conversation feel like talking to a friend who loves entertainment! 🍿`,
+Be helpful, energetic, and make every conversation feel like talking to a friend who loves movies! 🍿`,
       },
     ],
   };
@@ -179,16 +175,6 @@ function isAskingAboutCreator(prompt) {
   return creatorKeywords.some(keyword => lower.includes(keyword));
 }
 
-// Check if user is asking for name
-function isAskingForName(prompt) {
-  const lower = prompt.toLowerCase();
-  const nameKeywords = [
-    'what is your name', 'who are you', 'your name', 'what do i call you',
-    'whats your name', 'what\'s your name', 'tell me your name'
-  ];
-  return nameKeywords.some(keyword => lower.includes(keyword));
-}
-
 // Check if query is about the website
 function isWebsiteRelated(prompt) {
   const lower = prompt.toLowerCase();
@@ -202,7 +188,7 @@ function isWebsiteRelated(prompt) {
     'free', 'account', 'sign up', 'login', 'app', 'how to', 'help',
     'trending', 'upcoming', 'release', 'kenyan', 'afro', 'reggaetone', 
     'arbantone', 'gengetone', 'rnb', 'classical', 'pop', 'gospel', 'instrumental',
-    'my list', 'continue watching', 'recently watched', 'entertainment'
+    'my list', 'continue watching', 'recently watched'
   ];
   
   for (const keyword of websiteKeywords) {
@@ -211,7 +197,7 @@ function isWebsiteRelated(prompt) {
     }
   }
   
-  // Check for capitalized words (potential titles)
+  // Check for capitalized words (potential movie names)
   const words = prompt.split(' ');
   for (const word of words) {
     if (word.length > 3 && word[0] === word[0].toUpperCase() && word[0] !== word[0].toLowerCase()) {
@@ -286,12 +272,11 @@ export default async function handler(req, res) {
     const isWebsiteRelatedQuery = isWebsiteRelated(prompt);
     const isMovieRelated = isMovieQuery(prompt);
     const isCreatorQuestion = isAskingAboutCreator(prompt);
-    const isNameQuestion = isAskingForName(prompt);
     
     let searchResults = [];
     
-    // ONLY search for content if the query is about movies/series AND website-related
-    if (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion && !isNameQuestion) {
+    // ONLY search for movies if the query is about movies AND website-related
+    if (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion) {
       const searchTopic = extractSearchTopic(prompt);
       if (searchTopic && searchTopic.length > 2) {
         searchResults = await searchMaxMovies(searchTopic, 6);
@@ -304,25 +289,19 @@ export default async function handler(req, res) {
 
     let searchContext = "";
     if (searchResults.length > 0) {
-      searchContext = `\n\nFound these titles from MaxMovies: ${JSON.stringify(searchResults)}\n\nRespond naturally. Use **bold** around titles. Keep it short, fun, and use Sheng/emoji vibes.`;
+      searchContext = `\n\nFound these movies/series from MaxMovies: ${JSON.stringify(searchResults)}\n\nRespond naturally. Use **bold** around titles. Keep it short, fun, and use Sheng/emoji vibes.`;
     }
 
     // Special response for creator questions
     let creatorResponse = "";
     if (isCreatorQuestion) {
-      creatorResponse = "I was created by Max, a 21-year-old developer from Kenya! He built me to be your entertainment buddy. 🎬";
-    }
-    
-    // Special response for name questions
-    let nameResponse = "";
-    if (isNameQuestion) {
-      nameResponse = "I'm MaxMovies AI, your entertainment buddy! 🎬";
+      creatorResponse = "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬";
     }
 
     // Redirect non-website queries
     let redirectResponse = "";
-    if (!isWebsiteRelatedQuery && !isCreatorQuestion && !isNameQuestion) {
-      redirectResponse = "Eh, I'm MaxMovies AI fam! I only know about entertainment and everything on MaxMovies. 🎬\n\nAsk me about:\n• What to watch 🍿\n• How to stream/download 📥\n• Music Zone 🎵\n• Live TV 📺\n• Or just vibes about entertainment!\n\nWhat you looking for today? 😎";
+    if (!isWebsiteRelatedQuery && !isCreatorQuestion) {
+      redirectResponse = "Eh, I'm strictly MaxMovies AI fam! I only know about movies, series, music, and everything on MaxMovies. 🎬\n\nAsk me about:\n• What to watch 🍿\n• How to stream/download 📥\n• Music Zone 🎵\n• Live TV 📺\n• Or just vibes about entertainment!\n\nWhat movie or series you looking for today? 😎";
     }
 
     const promptText = `
@@ -331,8 +310,6 @@ User asked: "${prompt}"
 ${redirectResponse ? `IMPORTANT: The user asked about something NOT related to MaxMovies. Answer with EXACTLY this: "${redirectResponse}"` : ""}
 
 ${creatorResponse ? `SPECIAL INSTRUCTION: Answer with: "${creatorResponse}"` : ""}
-
-${nameResponse ? `SPECIAL INSTRUCTION: Answer with: "${nameResponse}"` : ""}
 
 ${searchContext}
 
@@ -345,16 +322,16 @@ WEBSITE CONTEXT (only relevant if user asks about MaxMovies features):
 - App: Coming soon - check Downloads page
 
 RESPONSE STYLE REQUIREMENTS:
-- Be JOVIAL and FRIENDLY (like an entertainment buddy)
+- Be JOVIAL and FRIENDLY (like a movie buddy)
 - Use SHENG and informal English: "Sasa!", "Vipi!", "Fiti!", "Safi!", "Kuu!", "Kabisa!"
 - Use EMOJIS: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵 🎶
 - NEVER be formal or robotic
 - NEVER say "as an AI" or "language model"
 - Keep responses conversational and energetic
-- When giving titles, put them in **bold**
+- When giving movie titles, put them in **bold**
 - Be enthusiastic about recommendations: "Let me put you on! 🔥"
 
-${!redirectResponse && !creatorResponse && !nameResponse ? "Answer the user's question naturally about entertainment or MaxMovies features. Be jovial and fun!" : ""}
+${!redirectResponse && !creatorResponse ? "Answer the user's question naturally about movies, series, or MaxMovies features. Be jovial and fun!" : ""}
 `;
 
     const geminiResponse = await fetch(
@@ -396,7 +373,7 @@ ${!redirectResponse && !creatorResponse && !nameResponse ? "Answer the user's qu
     cleanText = cleanText.replace(/Google/gi, '');
     cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
     
-    // Add clickable links for titles from search results
+    // Add clickable links for movie titles from search results
     if (searchResults.length > 0) {
       searchResults.forEach(movie => {
         if (movie.title && movie.title.length > 2) {
@@ -415,7 +392,7 @@ ${!redirectResponse && !creatorResponse && !nameResponse ? "Answer the user's qu
     
     saveMemory(userId, memory);
 
-    const recommendations = (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion && !isNameQuestion) ? searchResults.slice(0, 6).map(item => ({
+    const recommendations = (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
       subjectId: item.subjectId,
       title: item.title,
       cover: item.cover,
