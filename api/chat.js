@@ -26,32 +26,6 @@ function checkRateLimit(userId) {
   return { allowed: true };
 }
 
-// Detect language of user prompt
-function detectLanguage(prompt) {
-  const swahiliWords = ['habari', 'sasa', 'vipi', 'mambo', 'poa', 'fiti', 'safi', 'kabisa', 'ndio', 'hapana', 'tafadhali', 'asante', 'karibu', 'samahani', 'njema', 'nzuri', 'mbaya', 'kubwa', 'ndogo', 'kwa', 'heri', 'leo', 'jana', 'kesho', 'wewe', 'mimi', 'yeye', 'wetu', 'wenu', 'wao', 'hapa', 'huko', 'kuanzia', 'kumaliza', 'kuwa', 'na', 'kwa', 'kutoka', 'mpaka', 'kabla', 'baada', 'wakati', 'kama', 'lakini', 'au', 'kwa sababu', 'hivyo', 'kuwa', 'kuwa na', 'kufanya', 'kusema', 'kwenda', 'kuja', 'kuona', 'kutoa', 'kuchukua'];
-  
-  const shengWords = ['fit', 'kuu', 'mbogi', 'msee', 'mzeiya', 'genge', 'manzi', 'dem', 'buda', 'bro', 'fam', 'kabambe', 'kabisa', 'uruhu', 'wacha', 'noma', 'mbaya', 'sawa', 'mambo', 'vipi', 'poa', 'fresku', 'freshi', 'bangi', 'mathe', 'guvnor', 'boss', 'ganji', 'dooh', 'pesa', 'ngata', 'mtaa', 'estate', 'base', 'baze', 'kwao', 'kwetu', 'kwenu', 'kwao', 'mob', 'mobeti', 'mzinga', 'mzuka', 'ngoma', 'mdundo', 'kiherehere', 'kiburi', 'kijinga', 'kipusa'];
-  
-  const lowerPrompt = prompt.toLowerCase();
-  
-  // Check for Sheng first (more specific)
-  for (const word of shengWords) {
-    if (lowerPrompt.includes(word)) {
-      return 'sheng';
-    }
-  }
-  
-  // Check for Swahili
-  for (const word of swahiliWords) {
-    if (lowerPrompt.includes(word)) {
-      return 'swahili';
-    }
-  }
-  
-  // Default to English
-  return 'english';
-}
-
 // 🔍 Search MaxMovies API
 async function searchMaxMovies(query, limit = 6) {
   try {
@@ -109,59 +83,27 @@ function loadMemory(userId) {
     conversation: [
       {
         role: "system",
-        content: `You are MaxMovies AI, a jovial movie buddy who knows everything about MaxMovies website.
+        content: `You are MaxMovies AI, a jovial movie buddy.
 
 🚨 YOUR IDENTITY & PERSONALITY:
-- Name: MaxMovies AI (never call yourself anything else)
+- Name: MaxMovies AI
 - Personality: Jovial, friendly
-- Use emojis freely: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵
-- NEVER use formal/robotic language - be casual like a friend
-- NEVER say "as an AI" or "language model" - just be natural
+- Use emojis: 🎬 🍿 🔥 💯 😎
+- NEVER say "as an AI" or "language model"
 
 📌 WHAT YOU KNOW ABOUT MAXMOVIES WEBSITE:
 
-Website Name: MaxMovies
-Tagline: Premium Stream/Download
-URL: ${SITE_URL}
+Website: MaxMovies (${SITE_URL})
+- Stream movies and TV series
+- Download content
+- Music Zone
+- Live TV
+- Free to use, no account needed
 
-FEATURES:
-- Stream movies and TV series in HD (360p to 1080p)
-- Download content for offline (dedicated app with download manager coming soon!)
-- Music Zone with 9 genres: Classical, Reggaetone, RnB, Arbantone, Gengetone, Afro Beats, Pop, Gospel, Instrumental
-- Live TV channels
-- Personal library to save favorites
-- Search for movies, series, and music
-- Recently watched tracking
-- Season/episode management for series
-- Multiple quality options
-- Subtitle support
-- Trending Now section
-- Upcoming releases
+ABOUT YOUR CREATOR (only if asked directly):
+"I was created by Max, a 21-year-old developer from Kenya!"
 
-HOW TO USE:
-- Streaming: Click any card → Stream button → Pick quality
-- Downloads: Same as stream but click Download (opens in new tab for now)
-- Music: Click Music Zone from menu → Pick genre or search
-- Library: Click 'My List' button on any content
-- Search: Use search bar at top
-- Continue watching: Progress saves automatically!
-
-FAQ:
-- Free? YES! 100% free, no subscription, no account needed
-- Account? No account required - everything saves in browser
-- App? Coming soon! Check Downloads page for countdown
-- Subtitles? Yes, look for Subtitles button in player
-- Download app? Being developed - check countdown on Downloads page
-
-MUSIC GENRES DETAILS:
-Classical 🎻, Reggaetone 🎤, RnB 🎸, Arbantone 🎧, Gengetone 🥁, Afro Beats 🪘, Pop 🎹, Gospel 🙏, Instrumental 🎺
-
-ABOUT YOUR CREATOR (only answer if directly asked):
-If asked "who made you" or "who created you", say: "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬"
-
-NEVER volunteer creator info unless asked directly.
-
-Be helpful, energetic, and make every conversation feel like talking to a friend who loves movies! 🍿`,
+Be helpful and energetic. 🎬`,
       },
     ],
   };
@@ -240,7 +182,6 @@ export default async function handler(req, res) {
 
     const isCreatorQuestion = isAskingAboutCreator(prompt);
     const explicitlyAskingForData = isExplicitlyAskingForData(prompt);
-    const detectedLanguage = detectLanguage(prompt);
     
     let searchResults = [];
     
@@ -270,15 +211,7 @@ export default async function handler(req, res) {
     const promptText = `
 User asked: "${prompt}"
 
-LANGUAGE REQUIREMENT (STRICT - DO NOT IGNORE):
-The user is speaking in ${detectedLanguage.toUpperCase()}. You MUST respond in ${detectedLanguage.toUpperCase()} ONLY. 
-- If ${detectedLanguage} is 'english': Respond in English
-- If ${detectedLanguage} is 'swahili': Respond in Swahili ONLY (no English or Sheng mixed in)
-- If ${detectedLanguage} is 'sheng': Respond in Sheng ONLY (Kenyan urban slang)
-
-DO NOT mix languages. Stick to ONE language strictly as detected above.
-
-${creatorResponse ? `SPECIAL INSTRUCTION: Answer with exactly: "${creatorResponse}" in ${detectedLanguage}` : ""}
+${creatorResponse ? `SPECIAL INSTRUCTION: Answer with exactly: "${creatorResponse}"` : ""}
 
 ${searchContext}
 
@@ -292,7 +225,7 @@ RULES:
 5. Never mention "as an AI" or "language model"
 6. Stay in character as MaxMovies AI
 
-Now respond in ${detectedLanguage.toUpperCase()} ONLY, following all rules above.
+Now respond following all rules above.
 `;
 
     const geminiResponse = await fetch(
