@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
 
@@ -24,6 +24,32 @@ function checkRateLimit(userId) {
   recentRequests.push(now);
   rateLimitStore.set(userId, recentRequests);
   return { allowed: true };
+}
+
+// Detect language of user prompt
+function detectLanguage(prompt) {
+  const swahiliWords = ['habari', 'sasa', 'vipi', 'mambo', 'poa', 'fiti', 'safi', 'kabisa', 'ndio', 'hapana', 'tafadhali', 'asante', 'karibu', 'samahani', 'njema', 'nzuri', 'mbaya', 'kubwa', 'ndogo', 'kwa', 'heri', 'leo', 'jana', 'kesho', 'wewe', 'mimi', 'yeye', 'wetu', 'wenu', 'wao', 'hapa', 'huko', 'kuanzia', 'kumaliza', 'kuwa', 'na', 'kwa', 'kutoka', 'mpaka', 'kabla', 'baada', 'wakati', 'kama', 'lakini', 'au', 'kwa sababu', 'hivyo', 'kuwa', 'kuwa na', 'kufanya', 'kusema', 'kwenda', 'kuja', 'kuona', 'kutoa', 'kuchukua'];
+  
+  const shengWords = ['fit', 'kuu', 'mbogi', 'msee', 'mzeiya', 'genge', 'manzi', 'dem', 'buda', 'bro', 'fam', 'kabambe', 'kabisa', 'uruhu', 'wacha', 'noma', 'mbaya', 'sawa', 'mambo', 'vipi', 'poa', 'fresku', 'freshi', 'bangi', 'mathe', 'guvnor', 'boss', 'ganji', 'dooh', 'pesa', 'ngata', 'mtaa', 'estate', 'base', 'baze', 'kwao', 'kwetu', 'kwenu', 'kwao', 'mob', 'mobeti', 'mzinga', 'mzuka', 'ngoma', 'mdundo', 'kiherehere', 'kiburi', 'kijinga', 'kipusa'];
+  
+  const lowerPrompt = prompt.toLowerCase();
+  
+  // Check for Sheng first (more specific)
+  for (const word of shengWords) {
+    if (lowerPrompt.includes(word)) {
+      return 'sheng';
+    }
+  }
+  
+  // Check for Swahili
+  for (const word of swahiliWords) {
+    if (lowerPrompt.includes(word)) {
+      return 'swahili';
+    }
+  }
+  
+  // Default to English
+  return 'english';
 }
 
 // 🔍 Search MaxMovies API
@@ -87,7 +113,7 @@ function loadMemory(userId) {
 
 🚨 YOUR IDENTITY & PERSONALITY:
 - Name: MaxMovies AI (never call yourself anything else)
-- Personality: Jovial, friendly, uses Sheng (Kenyan slang) and informal English
+- Personality: Jovial, friendly
 - Use emojis freely: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵
 - NEVER use formal/robotic language - be casual like a friend
 - NEVER say "as an AI" or "language model" - just be natural
@@ -130,20 +156,6 @@ FAQ:
 MUSIC GENRES DETAILS:
 Classical 🎻, Reggaetone 🎤, RnB 🎸, Arbantone 🎧, Gengetone 🥁, Afro Beats 🪘, Pop 🎹, Gospel 🙏, Instrumental 🎺
 
-RESPONSE STYLE RULES:
-- Be jovial and fun! Use phrases like: "Sasa!", "Vipi mtu!", "Fiti!", "Safi!", "Kuu!", "Kabisa!"
-- Mix Sheng and informal English naturally
-- Use emojis to express energy
-- Keep responses conversational, not robotic
-- NEVER use formal greetings like "Greetings" or "Hello, I am"
-- Start naturally: "Yo!", "Sasa!", "Vipi!", "Hey!"
-- When giving movie titles, put them in **bold**
-- For recommendations, be enthusiastic: "Let me put you on! 🔥"
-
-WEBSITE-ONLY RULE:
-If asked about anything NOT related to MaxMovies (sports, news, politics, random facts, etc.), politely redirect:
-"Eh, I'm strictly MaxMovies AI fam! I only know about movies, series, music, and everything on MaxMovies. 🎬 Ask me about what to watch or how to use the site!"
-
 ABOUT YOUR CREATOR (only answer if directly asked):
 If asked "who made you" or "who created you", say: "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬"
 
@@ -175,57 +187,15 @@ function isAskingAboutCreator(prompt) {
   return creatorKeywords.some(keyword => lower.includes(keyword));
 }
 
-// Check if query is about the website
-function isWebsiteRelated(prompt) {
+// Check if user explicitly asks for data from MaxMovies
+function isExplicitlyAskingForData(prompt) {
   const lower = prompt.toLowerCase();
-  
-  const websiteKeywords = [
-    'maxmovies', 'movie', 'series', 'film', 'show', 'watch', 'recommend', 
-    'suggest', 'action', 'comedy', 'drama', 'horror', 'thriller', 'romance', 
-    'sci-fi', 'actor', 'actress', 'director', 'cast', 'plot', 'season', 
-    'episode', 'best', 'top', 'rated', 'oscar', 'download', 'stream', 
-    'quality', 'subtitle', 'library', 'music', 'live tv', 'channel',
-    'free', 'account', 'sign up', 'login', 'app', 'how to', 'help',
-    'trending', 'upcoming', 'release', 'kenyan', 'afro', 'reggaetone', 
-    'arbantone', 'gengetone', 'rnb', 'classical', 'pop', 'gospel', 'instrumental',
-    'my list', 'continue watching', 'recently watched'
+  const dataKeywords = [
+    'search', 'find', 'look up', 'show me', 'get me', 'give me',
+    'recommend', 'suggest', 'tell me about', 'what is', 'info on'
   ];
   
-  for (const keyword of websiteKeywords) {
-    if (lower.includes(keyword)) {
-      return true;
-    }
-  }
-  
-  // Check for capitalized words (potential movie names)
-  const words = prompt.split(' ');
-  for (const word of words) {
-    if (word.length > 3 && word[0] === word[0].toUpperCase() && word[0] !== word[0].toLowerCase()) {
-      return true;
-    }
-  }
-  
-  return false;
-}
-
-// Check if user is asking about movies/series specifically
-function isMovieQuery(prompt) {
-  const lower = prompt.toLowerCase();
-  
-  const movieKeywords = [
-    'movie', 'series', 'film', 'show', 'watch', 'recommend', 'suggest',
-    'action', 'comedy', 'drama', 'horror', 'thriller', 'romance', 'sci-fi',
-    'actor', 'actress', 'director', 'cast', 'plot', 'ending', 'season', 'episode',
-    'best', 'top', 'rated', 'oscar'
-  ];
-  
-  for (const keyword of movieKeywords) {
-    if (lower.includes(keyword)) {
-      return true;
-    }
-  }
-  
-  return false;
+  return dataKeywords.some(keyword => lower.includes(keyword));
 }
 
 function extractSearchTopic(prompt) {
@@ -268,15 +238,14 @@ export default async function handler(req, res) {
     let memory = loadMemory(userId);
     memory.conversation.push({ role: "user", content: prompt });
 
-    // Check if query is website-related
-    const isWebsiteRelatedQuery = isWebsiteRelated(prompt);
-    const isMovieRelated = isMovieQuery(prompt);
     const isCreatorQuestion = isAskingAboutCreator(prompt);
+    const explicitlyAskingForData = isExplicitlyAskingForData(prompt);
+    const detectedLanguage = detectLanguage(prompt);
     
     let searchResults = [];
     
-    // ONLY search for movies if the query is about movies AND website-related
-    if (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion) {
+    // ONLY search if user explicitly asks for movie/series data
+    if (explicitlyAskingForData && !isCreatorQuestion) {
       const searchTopic = extractSearchTopic(prompt);
       if (searchTopic && searchTopic.length > 2) {
         searchResults = await searchMaxMovies(searchTopic, 6);
@@ -288,8 +257,8 @@ export default async function handler(req, res) {
     }
 
     let searchContext = "";
-    if (searchResults.length > 0) {
-      searchContext = `\n\nFound these movies/series from MaxMovies: ${JSON.stringify(searchResults)}\n\nRespond naturally. Use **bold** around titles. Keep it short, fun, and use Sheng/emoji vibes.`;
+    if (searchResults.length > 0 && explicitlyAskingForData) {
+      searchContext = `\n\nFound these from MaxMovies: ${JSON.stringify(searchResults)}\n\nONLY mention these if the user explicitly asked for movie/series information. Otherwise, ignore this data completely.`;
     }
 
     // Special response for creator questions
@@ -298,40 +267,32 @@ export default async function handler(req, res) {
       creatorResponse = "I was created by Max, a 21-year-old developer from Kenya! He built me to be your movie buddy. 🎬";
     }
 
-    // Redirect non-website queries
-    let redirectResponse = "";
-    if (!isWebsiteRelatedQuery && !isCreatorQuestion) {
-      redirectResponse = "Eh, I'm strictly MaxMovies AI fam! I only know about movies, series, music, and everything on MaxMovies. 🎬\n\nAsk me about:\n• What to watch 🍿\n• How to stream/download 📥\n• Music Zone 🎵\n• Live TV 📺\n• Or just vibes about entertainment!\n\nWhat movie or series you looking for today? 😎";
-    }
-
     const promptText = `
 User asked: "${prompt}"
 
-${redirectResponse ? `IMPORTANT: The user asked about something NOT related to MaxMovies. Answer with EXACTLY this: "${redirectResponse}"` : ""}
+LANGUAGE REQUIREMENT (STRICT - DO NOT IGNORE):
+The user is speaking in ${detectedLanguage.toUpperCase()}. You MUST respond in ${detectedLanguage.toUpperCase()} ONLY. 
+- If ${detectedLanguage} is 'english': Respond in English
+- If ${detectedLanguage} is 'swahili': Respond in Swahili ONLY (no English or Sheng mixed in)
+- If ${detectedLanguage} is 'sheng': Respond in Sheng ONLY (Kenyan urban slang)
 
-${creatorResponse ? `SPECIAL INSTRUCTION: Answer with: "${creatorResponse}"` : ""}
+DO NOT mix languages. Stick to ONE language strictly as detected above.
+
+${creatorResponse ? `SPECIAL INSTRUCTION: Answer with exactly: "${creatorResponse}" in ${detectedLanguage}` : ""}
 
 ${searchContext}
 
-WEBSITE CONTEXT (only relevant if user asks about MaxMovies features):
-- Name: MaxMovies - Premium Stream/Download
-- URL: ${SITE_URL}
-- Features: Streaming (360p-1080p), Downloads (app coming), Music Zone (9 genres), Live TV, Library, Search
-- Music Genres: Classical, Reggaetone, RnB, Arbantone, Gengetone, Afro Beats, Pop, Gospel, Instrumental
-- Free? YES! No account needed
-- App: Coming soon - check Downloads page
+${!searchResults.length && explicitlyAskingForData ? "No results found from MaxMovies database." : ""}
 
-RESPONSE STYLE REQUIREMENTS:
-- Be JOVIAL and FRIENDLY (like a movie buddy)
-- Use SHENG and informal English: "Sasa!", "Vipi!", "Fiti!", "Safi!", "Kuu!", "Kabisa!"
-- Use EMOJIS: 🎬 🍿 🔥 💯 😎 🙌 💪 🎵 🎶
-- NEVER be formal or robotic
-- NEVER say "as an AI" or "language model"
-- Keep responses conversational and energetic
-- When giving movie titles, put them in **bold**
-- Be enthusiastic about recommendations: "Let me put you on! 🔥"
+RULES:
+1. ONLY provide movie/series data from MaxMovies if the user explicitly asks for it (using words like "search", "find", "recommend", "suggest", "look up", "get me", "tell me about")
+2. If the user doesn't explicitly ask for data, just have a normal conversation without mentioning any movie titles or recommendations
+3. Keep responses natural and conversational
+4. Use emojis naturally
+5. Never mention "as an AI" or "language model"
+6. Stay in character as MaxMovies AI
 
-${!redirectResponse && !creatorResponse ? "Answer the user's question naturally about movies, series, or MaxMovies features. Be jovial and fun!" : ""}
+Now respond in ${detectedLanguage.toUpperCase()} ONLY, following all rules above.
 `;
 
     const geminiResponse = await fetch(
@@ -350,7 +311,6 @@ ${!redirectResponse && !creatorResponse ? "Answer the user's question naturally 
     );
 
     if (!geminiResponse.ok) {
-      // Return the exact error message without emojis as requested
       return res.status(503).json({ 
         reply: "Whoops! Server busy. Try again later!",
         error: "Whoops! Server busy. Try again later!" 
@@ -373,8 +333,8 @@ ${!redirectResponse && !creatorResponse ? "Answer the user's question naturally 
     cleanText = cleanText.replace(/Google/gi, '');
     cleanText = cleanText.replace(/Gemini/gi, 'MaxMovies AI');
     
-    // Add clickable links for movie titles from search results
-    if (searchResults.length > 0) {
+    // Add clickable links ONLY if user explicitly asked for data
+    if (searchResults.length > 0 && explicitlyAskingForData) {
       searchResults.forEach(movie => {
         if (movie.title && movie.title.length > 2) {
           const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
@@ -392,7 +352,8 @@ ${!redirectResponse && !creatorResponse ? "Answer the user's question naturally 
     
     saveMemory(userId, memory);
 
-    const recommendations = (isWebsiteRelatedQuery && isMovieRelated && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
+    // Only return recommendations if user explicitly asked for data
+    const recommendations = (explicitlyAskingForData && !isCreatorQuestion) ? searchResults.slice(0, 6).map(item => ({
       subjectId: item.subjectId,
       title: item.title,
       cover: item.cover,
@@ -408,7 +369,6 @@ ${!redirectResponse && !creatorResponse ? "Answer the user's question naturally 
     
   } catch (err) {
     console.error("Server error:", err);
-    // Return exact error message without emojis as requested
     return res.status(503).json({ 
       reply: "Whoops! Server busy. Try again later!",
       error: "Whoops! Server busy. Try again later!" 
