@@ -5,8 +5,8 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
 
-const MEMORY_DIR = "/tmp/memory";
-if (!fs.existsSync(MEMORY_DIR)) fs.mkdirSync(MEMORY_DIR);
+// Use in-memory store instead of filesystem for serverless
+const memoryStore = new Map();
 
 const rateLimitStore = new Map();
 
@@ -68,45 +68,46 @@ async function searchMaxMovies(query, limit = 5) {
   }
 }
 
-function loadMemory(userId) {
-  const filePath = path.join(MEMORY_DIR, `memory_${userId}.json`);
-  try {
-    if (fs.existsSync(filePath)) {
-      const memory = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      // Ensure conversation array exists
-      if (!memory.conversation) memory.conversation = [];
-      return memory;
+// Simple in-memory conversation storage (last 5 messages max)
+function getConversationHistory(userId) {
+  if (!memoryStore.has(userId)) {
+    memoryStore.set(userId, []);
+  }
+  return memoryStore.get(userId);
+}
+
+function addToConversation(userId, role, content) {
+  const history = getConversationHistory(userId);
+  history.push({ role, content });
+  
+  // Keep only last 6 messages (3 exchanges) to prevent token overflow
+  if (history.length > 6) {
+    history.shift();
+  }
+}
+
+function clearOldMemory() {
+  // Clear memories older than 30 minutes
+  const now = Date.now();
+  for (const [userId, data] of memoryStore.entries()) {
+    if (data.timestamp && now - data.timestamp > 1800000) {
+      memoryStore.delete(userId);
     }
-  } catch (err) {
-    console.error(`Failed to load memory:`, err);
-  }
-
-  return {
-    userId,
-    conversation: []
-  };
-}
-
-function saveMemory(userId, memory) {
-  const filePath = path.join(MEMORY_DIR, `memory_${userId}.json`);
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(memory, null, 2), "utf-8");
-  } catch (err) {
-    console.error(`Failed to save memory:`, err);
   }
 }
+
+// Run cleanup every hour
+setInterval(clearOldMemory, 3600000);
 
 // Check if user is asking about identity/creator
 function isAskingAboutIdentity(prompt) {
   const lower = prompt.toLowerCase();
   
-  // Name related questions
   const nameKeywords = [
     'what is your name', 'your name', 'who are you', 'call you', 
     'what are you', 'introduce yourself', 'tell me about yourself'
   ];
   
-  // Creator related questions
   const creatorKeywords = [
     'who made you', 'who built you', 'who created you', 'your creator',
     'who developed you', 'who programmed you', 'who is your maker',
@@ -121,35 +122,31 @@ function isAskingAboutIdentity(prompt) {
 function getIdentityResponse(prompt) {
   const lower = prompt.toLowerCase();
   
-  // Name questions
   if (lower.includes('what is your name') || lower.includes('your name') || 
       lower.includes('who are you') || lower.includes('call you')) {
     return "I'm MaxMovies AI! Your friendly movie buddy from MaxMovies website. 🎬";
   }
   
-  // Creator questions
   if (lower.includes('who made you') || lower.includes('who created you') || 
       lower.includes('your creator') || lower.includes('who built you') ||
       lower.includes('who developed you') || lower.includes('who is max')) {
     return "I was created by Max, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
   }
   
-  // General intro
-  return "I'm MaxMovies AI, your movie buddy from MaxMovies website! Created by Max, a 21-year-old dev from Kenya. What movie are we watching today? 🎬";
+  return "I'm MaxMovies AI, your movie buddy from MaxMovies website! Created by Max, a 21-year-old dev from Kenya. 🎬";
 }
 
 // Check if user is asking for movie/series content
 function isAskingForContent(prompt) {
   const lower = prompt.toLowerCase();
   
-  // Skip if asking about identity
   if (isAskingAboutIdentity(prompt)) return false;
   
   const contentKeywords = [
     'watch', 'see', 'show me', 'find', 'search', 'look up', 'get me', 'give me',
     'recommend', 'suggest', 'tell me about', 'movie', 'series', 'film', 'show',
     'episode', 'season', 'stream', 'download', 'play', 'action', 'comedy', 
-    'drama', 'horror', 'thriller', 'sci-fi', 'romance', 'documentary'
+    'drama', 'horror', 'thriller', 'sci-fi', 'romance'
   ];
   
   return contentKeywords.some(keyword => lower.includes(keyword));
@@ -169,21 +166,16 @@ function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getFallbackResponse(prompt, searchResults, isIdentityQuestion) {
-  if (isIdentityQuestion) {
-    return getIdentityResponse(prompt);
-  }
-  
+function getFallbackResponse(searchResults) {
   if (searchResults && searchResults.length > 0) {
     let response = "🎬 Here's what I found:\n\n";
-    searchResults.slice(0, 3).forEach((result, index) => {
+    searchResults.slice(0, 3).forEach((result) => {
       response += `**${result.title}**`;
       if (result.year) response += ` (${result.year})`;
       if (result.rating) response += ` ⭐ ${result.rating}`;
       response += `\n`;
-      response += `Type: ${result.typeDisplay}\n\n`;
     });
-    response += `Tap any thumbnail below to watch! 🍿`;
+    response += `\nTap any thumbnail below to watch! 🍿`;
     return response;
   }
   
@@ -212,27 +204,18 @@ export default async function handler(req, res) {
     if (!rateCheck.allowed) {
       return res.status(429).json({ 
         error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!`,
-        reply: `⏰ Please wait ${rateCheck.waitTime} seconds before sending another message.`
+        reply: `⏰ Please wait ${rateCheck.waitTime} seconds.`
       });
     }
 
-    // Load existing conversation memory
-    let memory = loadMemory(userId);
-    
-    // Ensure conversation history exists
-    if (!memory.conversation) {
-      memory.conversation = [];
-    }
-    
-    // Add user message to history
-    memory.conversation.push({ role: "user", content: prompt });
+    // Add user message to conversation
+    addToConversation(userId, "user", prompt);
 
     const isIdentityQuestion = isAskingAboutIdentity(prompt);
     const askingForContent = isAskingForContent(prompt);
     
     let searchResults = [];
     
-    // ONLY search for content if not asking about identity
     if (askingForContent && !isIdentityQuestion) {
       const searchTopic = extractSearchTopic(prompt);
       console.log(`Searching for: "${searchTopic}"`);
@@ -246,18 +229,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // Handle identity questions immediately without API call
+    // Handle identity questions immediately
     if (isIdentityQuestion) {
       const identityReply = getIdentityResponse(prompt);
-      
-      memory.conversation.push({ role: "assistant", content: identityReply });
-      
-      // Keep last 15 messages for context (prevents memory bloat)
-      if (memory.conversation.length > 30) {
-        memory.conversation = memory.conversation.slice(-30);
-      }
-      
-      saveMemory(userId, memory);
+      addToConversation(userId, "assistant", identityReply);
       
       return res.status(200).json({ 
         reply: identityReply,
@@ -265,16 +240,49 @@ export default async function handler(req, res) {
       });
     }
 
+    // Get conversation history (last 4 messages for context)
+    const history = getConversationHistory(userId);
+    let conversationContext = "";
+    if (history.length > 1) {
+      const lastMessages = history.slice(-4);
+      conversationContext = "\nPrevious conversation:\n";
+      lastMessages.forEach(msg => {
+        if (msg.role === "user") {
+          conversationContext += `User: ${msg.content}\n`;
+        } else {
+          conversationContext += `AI: ${msg.content}\n`;
+        }
+      });
+    }
+
+    let searchContext = "";
+    if (searchResults.length > 0 && askingForContent) {
+      searchContext = "\nFound these movies/series:\n";
+      searchResults.forEach((result, index) => {
+        searchContext += `${index + 1}. ${result.title}`;
+        if (result.year) searchContext += ` (${result.year})`;
+        if (result.rating) searchContext += ` ⭐${result.rating}`;
+        searchContext += `\n`;
+      });
+    }
+
+    const promptText = `${conversationContext}
+Current: "${prompt}"
+
+${searchContext}
+
+Rules:
+- Reply in 1-2 short sentences
+- Bold titles with **title**
+- No long descriptions
+- Example: "🎬 Here's **Inception** (2010) - Dream heist thriller"
+
+Reply:`;
+
+    // Use a simple response if no API key
     if (!process.env.GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY is not set");
-      const fallbackReply = getFallbackResponse(prompt, searchResults, false);
-      
-      memory.conversation.push({ role: "assistant", content: fallbackReply });
-      
-      if (memory.conversation.length > 30) {
-        memory.conversation = memory.conversation.slice(-30);
-      }
-      saveMemory(userId, memory);
+      const fallbackReply = getFallbackResponse(searchResults);
+      addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
         reply: fallbackReply,
@@ -290,55 +298,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // Build conversation context from history (last 10 messages for relevance)
-    let conversationHistory = "";
-    const recentMessages = memory.conversation.slice(-10);
-    if (recentMessages.length > 1) {
-      conversationHistory = "\n\nPrevious conversation:\n";
-      recentMessages.slice(0, -1).forEach(msg => {
-        const role = msg.role === "user" ? "User" : "MaxMovies AI";
-        conversationHistory += `${role}: ${msg.content}\n`;
-      });
-      conversationHistory += `\nCurrent question: "${prompt}"\n`;
-    }
-
-    let searchContext = "";
-    if (searchResults.length > 0 && askingForContent) {
-      let contextText = "\n\nFound these from MaxMovies:\n";
-      searchResults.forEach((result, index) => {
-        contextText += `${index + 1}. **${result.title}**`;
-        if (result.year) contextText += ` (${result.year})`;
-        if (result.rating) contextText += ` - ⭐${result.rating}`;
-        contextText += `\n   ${result.typeDisplay}\n`;
-      });
-      searchContext = contextText;
-    }
-
-    const promptText = `
-${conversationHistory}
-
-User asked: "${prompt}"
-
-${searchContext}
-
-${!searchResults.length && askingForContent ? "No results found." : ""}
-
-STRICT RULES:
-1. Keep response SHORT - max 2 sentences total
-2. **Bold movie/series titles** using **title**
-3. NO long descriptions, NO paragraphs
-4. Just say: "Here's **Movie Title** (Year) - [1 short phrase about it]"
-5. Use emojis sparingly
-6. NEVER mention being an AI
-7. Remember previous conversation context
-
-Example response: "🎬 Here's **Inception** (2010) - Mind-bending thriller about dream thieves. Check the thumbnails below!"
-
-Now respond briefly:
-`;
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
       const geminiResponse = await fetch(
@@ -354,7 +315,7 @@ Now respond briefly:
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 150,
+              maxOutputTokens: 100,
             },
           }),
         }
@@ -363,60 +324,19 @@ Now respond briefly:
       clearTimeout(timeoutId);
 
       if (!geminiResponse.ok) {
-        const fallbackReply = getFallbackResponse(prompt, searchResults, false);
-        
-        memory.conversation.push({ role: "assistant", content: fallbackReply });
-        
-        if (memory.conversation.length > 30) {
-          memory.conversation = memory.conversation.slice(-30);
-        }
-        saveMemory(userId, memory);
-        
-        return res.status(200).json({ 
-          reply: fallbackReply,
-          recommendations: searchResults.slice(0, 5).map(item => ({
-            subjectId: item.subjectId,
-            title: item.title,
-            cover: item.cover,
-            rating: item.rating,
-            type: item.type,
-            typeDisplay: item.typeDisplay,
-            year: item.year
-          }))
-        });
+        throw new Error(`API returned ${geminiResponse.status}`);
       }
 
       const result = await geminiResponse.json();
       let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
       if (!fullResponse) {
-        const fallbackReply = getFallbackResponse(prompt, searchResults, false);
-        
-        memory.conversation.push({ role: "assistant", content: fallbackReply });
-        
-        if (memory.conversation.length > 30) {
-          memory.conversation = memory.conversation.slice(-30);
-        }
-        saveMemory(userId, memory);
-        
-        return res.status(200).json({ 
-          reply: fallbackReply,
-          recommendations: searchResults.slice(0, 5).map(item => ({
-            subjectId: item.subjectId,
-            title: item.title,
-            cover: item.cover,
-            rating: item.rating,
-            type: item.type,
-            typeDisplay: item.typeDisplay,
-            year: item.year
-          }))
-        });
+        throw new Error("Empty response");
       }
 
       // Clean up
       let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      cleanText = cleanText.replace(/as an ai|as an AI|language model|i am an ai|i'm an ai|gemini|google/gi, '');
-      cleanText = cleanText.replace(/MaxMovies AI/gi, 'MaxMovies AI');
+      cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
       
       // Add clickable links
       if (searchResults.length > 0 && askingForContent) {
@@ -429,17 +349,9 @@ Now respond briefly:
         });
       }
       
-      // Add assistant response to conversation history
-      memory.conversation.push({ role: "assistant", content: cleanText });
-      
-      // Keep only last 30 messages to prevent memory bloat
-      if (memory.conversation.length > 30) {
-        memory.conversation = memory.conversation.slice(-30);
-      }
-      
-      saveMemory(userId, memory);
+      // Add to conversation history
+      addToConversation(userId, "assistant", cleanText);
 
-      // Return recommendations when content found
       const recommendations = (askingForContent && searchResults.length > 0) ? 
         searchResults.slice(0, 5).map(item => ({
           subjectId: item.subjectId,
@@ -458,16 +370,10 @@ Now respond briefly:
       
     } catch (fetchError) {
       clearTimeout(timeoutId);
-      console.error("Fetch error:", fetchError);
+      console.error("API error:", fetchError.message);
       
-      const fallbackReply = getFallbackResponse(prompt, searchResults, false);
-      
-      memory.conversation.push({ role: "assistant", content: fallbackReply });
-      
-      if (memory.conversation.length > 30) {
-        memory.conversation = memory.conversation.slice(-30);
-      }
-      saveMemory(userId, memory);
+      const fallbackReply = getFallbackResponse(searchResults);
+      addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
         reply: fallbackReply,
@@ -487,8 +393,7 @@ Now respond briefly:
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! I'm MaxMovies AI. What movie are you looking for? 🎬",
-      error: err.message
+      reply: "Hey! I'm MaxMovies AI. What movie are you looking for? 🎬"
     });
   }
 }
