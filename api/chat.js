@@ -26,7 +26,7 @@ function checkRateLimit(userId) {
   return { allowed: true };
 }
 
-// 🔍 Search MaxMovies API
+// 🔍 Search MaxMovies API with more details for explanations
 async function searchMaxMovies(query, limit = 5) {
   try {
     const searchUrl = `${MAXMOVIES_API}/search/${encodeURIComponent(query)}`;
@@ -51,6 +51,18 @@ async function searchMaxMovies(query, limit = 5) {
         typeDisplay = 'MUSIC';
       }
       
+      // Generate a brief explanation based on available data
+      let explanation = '';
+      if (item.description) {
+        explanation = item.description.substring(0, 100);
+      } else if (item.genre) {
+        explanation = `${item.genre} ${typeDisplay.toLowerCase()}`;
+      } else if (item.director) {
+        explanation = `Directed by ${item.director}`;
+      } else {
+        explanation = `Exciting ${typeDisplay.toLowerCase()} to watch`;
+      }
+      
       return {
         subjectId: item.subjectId,
         title: item.title || 'Untitled',
@@ -59,6 +71,7 @@ async function searchMaxMovies(query, limit = 5) {
         typeDisplay: typeDisplay,
         rating: item.imdbRatingValue || null,
         year: item.releaseDate ? new Date(item.releaseDate).getFullYear() : null,
+        explanation: explanation
       };
     });
     
@@ -124,16 +137,16 @@ function getIdentityResponse(prompt) {
   
   if (lower.includes('what is your name') || lower.includes('your name') || 
       lower.includes('who are you') || lower.includes('call you')) {
-    return "I'm MaxMovies AI! Your friendly movie buddy from MaxMovies website. 🎬";
+    return "I'm **MaxMovies AI**! Your friendly movie buddy from MaxMovies website. 🎬";
   }
   
   if (lower.includes('who made you') || lower.includes('who created you') || 
       lower.includes('your creator') || lower.includes('who built you') ||
       lower.includes('who developed you') || lower.includes('who is max')) {
-    return "I was created by Max, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
+    return "I was created by **Max**, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
   }
   
-  return "I'm MaxMovies AI, your movie buddy from MaxMovies website! Created by Max, a 21-year-old dev from Kenya. 🎬";
+  return "I'm **MaxMovies AI**, your movie buddy from MaxMovies website! Created by **Max**, a 21-year-old dev from Kenya. 🎬";
 }
 
 // Check if user is asking for movie/series content
@@ -168,18 +181,22 @@ function escapeRegex(string) {
 
 function getFallbackResponse(searchResults) {
   if (searchResults && searchResults.length > 0) {
-    let response = "🎬 Here's what I found:\n\n";
+    let response = "🎬 **Here's what I found:**\n\n";
     searchResults.slice(0, 3).forEach((result) => {
       response += `**${result.title}**`;
       if (result.year) response += ` (${result.year})`;
       if (result.rating) response += ` ⭐ ${result.rating}`;
       response += `\n`;
+      if (result.explanation) {
+        response += `${result.explanation}\n`;
+      }
+      response += `\n`;
     });
-    response += `\nTap any thumbnail below to watch! 🍿`;
+    response += `Tap any thumbnail below to watch! 🍿`;
     return response;
   }
   
-  return "Hey! I'm MaxMovies AI. Ask me to find a movie or series for you! 🎬";
+  return "Hey! I'm **MaxMovies AI**. Ask me to find a movie or series for you! 🎬";
 }
 
 export default async function handler(req, res) {
@@ -257,12 +274,12 @@ export default async function handler(req, res) {
 
     let searchContext = "";
     if (searchResults.length > 0 && askingForContent) {
-      searchContext = "\nFound these movies/series:\n";
+      searchContext = "\nFound these movies/series with details:\n";
       searchResults.forEach((result, index) => {
-        searchContext += `${index + 1}. ${result.title}`;
+        searchContext += `${index + 1}. **${result.title}**`;
         if (result.year) searchContext += ` (${result.year})`;
         if (result.rating) searchContext += ` ⭐${result.rating}`;
-        searchContext += `\n`;
+        searchContext += `\n   ${result.explanation}\n`;
       });
     }
 
@@ -271,13 +288,16 @@ Current: "${prompt}"
 
 ${searchContext}
 
-Rules:
-- Reply in 1-2 short sentences
-- Bold titles with **title**
-- No long descriptions
-- Example: "🎬 Here's **Inception** (2010) - Dream heist thriller"
+IMPORTANT FORMATTING RULES:
+- **Bold every movie/series title** using **title**
+- Give a brief 5-10 word explanation for each title
+- Keep response to 2-3 sentences total
+- Use this exact format:
+  "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Quick description."
 
-Reply:`;
+Example: "🎬 Here's **Inception** (2010) - Mind-bending dream heist thriller. **The Dark Knight** (2008) - Epic Batman vs Joker story."
+
+Now respond following this format exactly:`;
 
     // Use a simple response if no API key
     if (!process.env.GEMINI_API_KEY) {
@@ -293,7 +313,8 @@ Reply:`;
           rating: item.rating,
           type: item.type,
           typeDisplay: item.typeDisplay,
-          year: item.year
+          year: item.year,
+          explanation: item.explanation
         }))
       });
     }
@@ -315,7 +336,7 @@ Reply:`;
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 100,
+              maxOutputTokens: 150,
             },
           }),
         }
@@ -334,11 +355,21 @@ Reply:`;
         throw new Error("Empty response");
       }
 
-      // Clean up
+      // Clean up and ensure titles are bolded
       let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
       
-      // Add clickable links
+      // If no bold tags exist, manually bold titles from search results
+      if (searchResults.length > 0 && askingForContent && !cleanText.includes('<strong>')) {
+        searchResults.forEach(movie => {
+          if (movie.title && movie.title.length > 2) {
+            const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
+            cleanText = cleanText.replace(regex, '<strong>$1</strong>');
+          }
+        });
+      }
+      
+      // Add clickable links to titles
       if (searchResults.length > 0 && askingForContent) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
@@ -360,7 +391,8 @@ Reply:`;
           rating: item.rating,
           type: item.type,
           typeDisplay: item.typeDisplay,
-          year: item.year
+          year: item.year,
+          explanation: item.explanation
         })) : [];
 
       return res.status(200).json({ 
@@ -385,7 +417,8 @@ Reply:`;
             rating: item.rating,
             type: item.type,
             typeDisplay: item.typeDisplay,
-            year: item.year
+            year: item.year,
+            explanation: item.explanation
           })) : []
       });
     }
@@ -393,7 +426,7 @@ Reply:`;
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! I'm MaxMovies AI. What movie are you looking for? 🎬"
+      reply: "Hey! I'm **MaxMovies AI**. What movie are you looking for? 🎬"
     });
   }
 }
