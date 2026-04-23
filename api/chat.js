@@ -141,16 +141,16 @@ function getIdentityResponse(prompt) {
   
   if (lower.includes('what is your name') || lower.includes('your name') || 
       lower.includes('who are you') || lower.includes('call you')) {
-    return "I'm MaxMovies AI! 🎬";
+    return "I'm **MaxMovies AI**! 🎬😎";
   }
   
   if (lower.includes('who made you') || lower.includes('who created you') || 
       lower.includes('your creator') || lower.includes('who built you') ||
       lower.includes('who developed you') || lower.includes('who is max')) {
-    return "Created by Max, a 21-year-old dev from Kenya! 🎬";
+    return "Created by **Max**, a 21-year-old dev from Kenya! 🎬🔥";
   }
   
-  return "I'm MaxMovies AI, created by Max! 🎬";
+  return "I'm **MaxMovies AI**, created by **Max**! 🎬💯";
 }
 
 // Check if user is explicitly asking for movie/series recommendations
@@ -191,30 +191,33 @@ function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getSimpleGreeting() {
+function getCoolGreeting() {
   const greetings = [
-    "Hey! 🎬",
-    "What's up? 🎬",
-    "Yo! 🎬",
-    "Hello! 🎬"
+    "Yo! Ready to binge? 🎬😎",
+    "Hey movie lover! What's good? 🍿🔥",
+    "Sup! Got your popcorn ready? 🎬😎",
+    "Hello! Looking for something lit? 🔥💯",
+    "Hey hey! Movie time? 🎬🍿",
+    "Yo yo! What we watching today? 😎🎬",
+    "Sup fam! Need some recommendations? 🔥💪"
   ];
   return greetings[Math.floor(Math.random() * greetings.length)];
 }
 
 function getFallbackResponse(searchResults) {
   if (searchResults && searchResults.length > 0) {
-    let response = "🎬 Here's what I found:\n\n";
+    let response = "🎬 **Here's what I found:**\n\n";
     searchResults.slice(0, 5).forEach((result) => {
-      response += `${result.title}`;
+      response += `**${result.title}**`;
       if (result.year) response += ` (${result.year})`;
       if (result.rating) response += ` ⭐ ${result.rating}`;
       response += ` - ${result.explanation}\n`;
     });
-    response += `\nTap any thumbnail below to watch! 🍿`;
+    response += `\nTap any thumbnail below to watch! 🍿😎`;
     return response;
   }
   
-  return getSimpleGreeting();
+  return getCoolGreeting();
 }
 
 export default async function handler(req, res) {
@@ -238,7 +241,7 @@ export default async function handler(req, res) {
     const rateCheck = checkRateLimit(userId);
     if (!rateCheck.allowed) {
       return res.status(429).json({ 
-        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro!`,
+        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro! 😎`,
         reply: `⏰ Please wait ${rateCheck.waitTime} seconds.`
       });
     }
@@ -267,7 +270,9 @@ export default async function handler(req, res) {
 
     // Handle identity questions
     if (isIdentityQuestion) {
-      const identityReply = getIdentityResponse(prompt);
+      let identityReply = getIdentityResponse(prompt);
+      // Bold the names
+      identityReply = identityReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       addToConversation(userId, "assistant", identityReply);
       
       return res.status(200).json({ 
@@ -276,9 +281,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // Handle simple greetings - no movies
+    // Handle simple greetings - no movies, just cool responses
     if (!askingForMovies && !isIdentityQuestion) {
-      const greeting = getSimpleGreeting();
+      const greeting = getCoolGreeting();
       addToConversation(userId, "assistant", greeting);
       
       return res.status(200).json({ 
@@ -289,7 +294,7 @@ export default async function handler(req, res) {
 
     // If asking for movies but no results found
     if (askingForMovies && searchResults.length === 0) {
-      const noResultsReply = "Sorry, couldn't find any movies matching that. Try something else? 🎬";
+      const noResultsReply = "Hmm... couldn't find that one. Try something else? 🎬😅";
       addToConversation(userId, "assistant", noResultsReply);
       
       return res.status(200).json({ 
@@ -315,9 +320,9 @@ export default async function handler(req, res) {
 
     let searchContext = "";
     if (searchResults.length > 0) {
-      searchContext = "\nMovies/Series found:\n";
+      searchContext = "\nMovies/Series found (MUST bold every title using **Title**):\n";
       searchResults.forEach((result, index) => {
-        searchContext += `${index + 1}. ${result.title}`;
+        searchContext += `${index + 1}. **${result.title}**`;
         if (result.year) searchContext += ` (${result.year})`;
         if (result.rating) searchContext += ` ⭐${result.rating}`;
         searchContext += ` - ${result.explanation}\n`;
@@ -329,17 +334,20 @@ User: "${prompt}"
 
 ${searchContext}
 
-INSTRUCTIONS:
-- ONLY respond with the movies/series listed above
-- Format: "🎬 Here's **Title** (Year) - Brief explanation. **Title2** (Year) - Brief explanation."
+CRITICAL FORMATTING RULES:
+- **MUST bold EVERY movie/series title** using **Title** format
+- Format: "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Brief explanation."
 - Keep to 2 sentences max
-- NO greetings, NO introductions, JUST the movies
+- NO greetings, NO introductions, JUST the movies with bold titles
+- Example: "🎬 Here's **Inception** (2010) - Mind-bending dream thriller. **The Dark Knight** (2008) - Epic Batman story."
 
 Response:`;
 
     // Use a simple response if no API key
     if (!process.env.GEMINI_API_KEY) {
-      const fallbackReply = getFallbackResponse(searchResults);
+      let fallbackReply = getFallbackResponse(searchResults);
+      // Ensure bold formatting
+      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
@@ -374,7 +382,7 @@ Response:`;
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 150,
+              maxOutputTokens: 180,
             },
           }),
         }
@@ -393,7 +401,7 @@ Response:`;
         throw new Error("Empty response");
       }
 
-      // Clean up
+      // Clean up and ensure bold formatting
       let cleanText = fullResponse;
       
       // Convert markdown bold to HTML
@@ -404,6 +412,16 @@ Response:`;
       cleanText = cleanText.replace(/^Hey.*?\.\s*/i, '');
       cleanText = cleanText.replace(/^Hello.*?\.\s*/i, '');
       cleanText = cleanText.replace(/^Yo.*?\.\s*/i, '');
+      
+      // If no bold tags exist, manually bold titles from search results
+      if (searchResults.length > 0 && !cleanText.includes('<strong>')) {
+        searchResults.forEach(movie => {
+          if (movie.title && movie.title.length > 2) {
+            const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
+            cleanText = cleanText.replace(regex, '<strong>$1</strong>');
+          }
+        });
+      }
       
       // Add clickable links
       if (searchResults.length > 0) {
@@ -439,7 +457,8 @@ Response:`;
       clearTimeout(timeoutId);
       console.error("API error:", fetchError.message);
       
-      const fallbackReply = getFallbackResponse(searchResults);
+      let fallbackReply = getFallbackResponse(searchResults);
+      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
@@ -460,7 +479,7 @@ Response:`;
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! 🎬"
+      reply: "Yo! Ready to find some movies? 🎬😎"
     });
   }
 }
