@@ -72,7 +72,10 @@ function loadMemory(userId) {
   const filePath = path.join(MEMORY_DIR, `memory_${userId}.json`);
   try {
     if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const memory = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      // Ensure conversation array exists
+      if (!memory.conversation) memory.conversation = [];
+      return memory;
     }
   } catch (err) {
     console.error(`Failed to load memory:`, err);
@@ -80,30 +83,7 @@ function loadMemory(userId) {
 
   return {
     userId,
-    conversation: [
-      {
-        role: "system",
-        content: `You are MaxMovies AI, a jovial movie buddy.
-
-🚨 YOUR IDENTITY & PERSONALITY:
-- Name: MaxMovies AI (NEVER say you're Gemini or Google)
-- Your creator: Max, a 21-year-old developer from Kenya
-- Personality: Jovial, friendly, helpful
-- Use emojis: 🎬 🍿 🔥 💯 😎
-- NEVER say "as an AI" or "language model"
-
-📌 WHAT YOU KNOW ABOUT MAXMOVIES WEBSITE:
-
-Website: MaxMovies (${SITE_URL})
-- Stream movies and TV series
-- Download content
-- Music Zone
-- Live TV
-- Free to use, no account needed
-
-Be helpful, energetic, and KNOW YOUR NAME AND CREATOR. 🎬`,
-      },
-    ],
+    conversation: []
   };
 }
 
@@ -236,7 +216,15 @@ export default async function handler(req, res) {
       });
     }
 
+    // Load existing conversation memory
     let memory = loadMemory(userId);
+    
+    // Ensure conversation history exists
+    if (!memory.conversation) {
+      memory.conversation = [];
+    }
+    
+    // Add user message to history
     memory.conversation.push({ role: "user", content: prompt });
 
     const isIdentityQuestion = isAskingAboutIdentity(prompt);
@@ -263,9 +251,12 @@ export default async function handler(req, res) {
       const identityReply = getIdentityResponse(prompt);
       
       memory.conversation.push({ role: "assistant", content: identityReply });
-      if (memory.conversation.length > 20) {
-        memory.conversation = memory.conversation.slice(-18);
+      
+      // Keep last 15 messages for context (prevents memory bloat)
+      if (memory.conversation.length > 30) {
+        memory.conversation = memory.conversation.slice(-30);
       }
+      
       saveMemory(userId, memory);
       
       return res.status(200).json({ 
@@ -277,6 +268,13 @@ export default async function handler(req, res) {
     if (!process.env.GEMINI_API_KEY) {
       console.error("GEMINI_API_KEY is not set");
       const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+      
+      memory.conversation.push({ role: "assistant", content: fallbackReply });
+      
+      if (memory.conversation.length > 30) {
+        memory.conversation = memory.conversation.slice(-30);
+      }
+      saveMemory(userId, memory);
       
       return res.status(200).json({ 
         reply: fallbackReply,
@@ -292,6 +290,18 @@ export default async function handler(req, res) {
       });
     }
 
+    // Build conversation context from history (last 10 messages for relevance)
+    let conversationHistory = "";
+    const recentMessages = memory.conversation.slice(-10);
+    if (recentMessages.length > 1) {
+      conversationHistory = "\n\nPrevious conversation:\n";
+      recentMessages.slice(0, -1).forEach(msg => {
+        const role = msg.role === "user" ? "User" : "MaxMovies AI";
+        conversationHistory += `${role}: ${msg.content}\n`;
+      });
+      conversationHistory += `\nCurrent question: "${prompt}"\n`;
+    }
+
     let searchContext = "";
     if (searchResults.length > 0 && askingForContent) {
       let contextText = "\n\nFound these from MaxMovies:\n";
@@ -305,6 +315,8 @@ export default async function handler(req, res) {
     }
 
     const promptText = `
+${conversationHistory}
+
 User asked: "${prompt}"
 
 ${searchContext}
@@ -318,6 +330,7 @@ STRICT RULES:
 4. Just say: "Here's **Movie Title** (Year) - [1 short phrase about it]"
 5. Use emojis sparingly
 6. NEVER mention being an AI
+7. Remember previous conversation context
 
 Example response: "🎬 Here's **Inception** (2010) - Mind-bending thriller about dream thieves. Check the thumbnails below!"
 
@@ -352,6 +365,13 @@ Now respond briefly:
       if (!geminiResponse.ok) {
         const fallbackReply = getFallbackResponse(prompt, searchResults, false);
         
+        memory.conversation.push({ role: "assistant", content: fallbackReply });
+        
+        if (memory.conversation.length > 30) {
+          memory.conversation = memory.conversation.slice(-30);
+        }
+        saveMemory(userId, memory);
+        
         return res.status(200).json({ 
           reply: fallbackReply,
           recommendations: searchResults.slice(0, 5).map(item => ({
@@ -371,6 +391,13 @@ Now respond briefly:
 
       if (!fullResponse) {
         const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+        
+        memory.conversation.push({ role: "assistant", content: fallbackReply });
+        
+        if (memory.conversation.length > 30) {
+          memory.conversation = memory.conversation.slice(-30);
+        }
+        saveMemory(userId, memory);
         
         return res.status(200).json({ 
           reply: fallbackReply,
@@ -402,10 +429,12 @@ Now respond briefly:
         });
       }
       
+      // Add assistant response to conversation history
       memory.conversation.push({ role: "assistant", content: cleanText });
       
-      if (memory.conversation.length > 20) {
-        memory.conversation = memory.conversation.slice(-18);
+      // Keep only last 30 messages to prevent memory bloat
+      if (memory.conversation.length > 30) {
+        memory.conversation = memory.conversation.slice(-30);
       }
       
       saveMemory(userId, memory);
@@ -432,6 +461,13 @@ Now respond briefly:
       console.error("Fetch error:", fetchError);
       
       const fallbackReply = getFallbackResponse(prompt, searchResults, false);
+      
+      memory.conversation.push({ role: "assistant", content: fallbackReply });
+      
+      if (memory.conversation.length > 30) {
+        memory.conversation = memory.conversation.slice(-30);
+      }
+      saveMemory(userId, memory);
       
       return res.status(200).json({ 
         reply: fallbackReply,
