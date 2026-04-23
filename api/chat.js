@@ -59,8 +59,12 @@ async function searchMaxMovies(query, limit = 5) {
         explanation = `${item.genre} ${typeDisplay.toLowerCase()}`;
       } else if (item.director) {
         explanation = `Directed by ${item.director}`;
+      } else if (type === 'movie') {
+        explanation = `Exciting movie to watch`;
+      } else if (type === 'series') {
+        explanation = `Amazing series to binge`;
       } else {
-        explanation = `Exciting ${typeDisplay.toLowerCase()} to watch`;
+        explanation = `Great ${typeDisplay.toLowerCase()} content`;
       }
       
       return {
@@ -137,16 +141,16 @@ function getIdentityResponse(prompt) {
   
   if (lower.includes('what is your name') || lower.includes('your name') || 
       lower.includes('who are you') || lower.includes('call you')) {
-    return "I'm **MaxMovies AI**! Your friendly movie buddy from MaxMovies website. 🎬";
+    return "I'm **<strong>MaxMovies AI</strong>**! Your friendly movie buddy from MaxMovies website. 🎬";
   }
   
   if (lower.includes('who made you') || lower.includes('who created you') || 
       lower.includes('your creator') || lower.includes('who built you') ||
       lower.includes('who developed you') || lower.includes('who is max')) {
-    return "I was created by **Max**, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
+    return "I was created by **<strong>Max</strong>**, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
   }
   
-  return "I'm **MaxMovies AI**, your movie buddy from MaxMovies website! Created by **Max**, a 21-year-old dev from Kenya. 🎬";
+  return "I'm **<strong>MaxMovies AI</strong>**, your movie buddy from MaxMovies website! Created by **<strong>Max</strong>**, a 21-year-old dev from Kenya. 🎬";
 }
 
 // Check if user is asking for movie/series content
@@ -182,7 +186,7 @@ function escapeRegex(string) {
 function getFallbackResponse(searchResults) {
   if (searchResults && searchResults.length > 0) {
     let response = "🎬 **Here's what I found:**\n\n";
-    searchResults.slice(0, 3).forEach((result) => {
+    searchResults.slice(0, 5).forEach((result) => {
       response += `**${result.title}**`;
       if (result.year) response += ` (${result.year})`;
       if (result.rating) response += ` ⭐ ${result.rating}`;
@@ -248,7 +252,12 @@ export default async function handler(req, res) {
 
     // Handle identity questions immediately
     if (isIdentityQuestion) {
-      const identityReply = getIdentityResponse(prompt);
+      let identityReply = getIdentityResponse(prompt);
+      // Ensure bolding works in the response
+      identityReply = identityReply.replace(/\*\*<strong>(.*?)<\/strong>\*\*/g, '<strong>$1</strong>');
+      identityReply = identityReply.replace(/<strong>/g, '<strong>');
+      identityReply = identityReply.replace(/<\/strong>/g, '</strong>');
+      
       addToConversation(userId, "assistant", identityReply);
       
       return res.status(200).json({ 
@@ -274,34 +283,40 @@ export default async function handler(req, res) {
 
     let searchContext = "";
     if (searchResults.length > 0 && askingForContent) {
-      searchContext = "\nFound these movies/series with details:\n";
+      searchContext = "\nFound these movies/series with details - provide a brief explanation for each:\n";
       searchResults.forEach((result, index) => {
         searchContext += `${index + 1}. **${result.title}**`;
         if (result.year) searchContext += ` (${result.year})`;
         if (result.rating) searchContext += ` ⭐${result.rating}`;
-        searchContext += `\n   ${result.explanation}\n`;
+        searchContext += `\n   Brief explanation: ${result.explanation}\n`;
       });
     }
 
     const promptText = `${conversationContext}
-Current: "${prompt}"
+Current user question: "${prompt}"
 
 ${searchContext}
 
-IMPORTANT FORMATTING RULES:
-- **Bold every movie/series title** using **title**
-- Give a brief 5-10 word explanation for each title
-- Keep response to 2-3 sentences total
-- Use this exact format:
-  "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Quick description."
+IMPORTANT RULES:
+1. **Bold ALL movie/series titles** using **Title** format
+2. **Bold your name** as **MaxMovies AI** whenever you mention yourself
+3. **Bold the creator name** as **Max** whenever you mention the developer
+4. Provide a VERY BRIEF explanation (5-10 words) for EACH movie/series you mention
+5. Keep total response to 2-3 sentences maximum
+6. Use this exact format:
+   "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Quick description."
 
-Example: "🎬 Here's **Inception** (2010) - Mind-bending dream heist thriller. **The Dark Knight** (2008) - Epic Batman vs Joker story."
+Example: "🎬 Here's **Inception** (2010) - Dream heist thriller. **The Dark Knight** (2008) - Batman vs Joker epic."
 
-Now respond following this format exactly:`;
+Now respond following these rules exactly. Remember to bold titles, your name, and creator name:`;
 
     // Use a simple response if no API key
     if (!process.env.GEMINI_API_KEY) {
-      const fallbackReply = getFallbackResponse(searchResults);
+      let fallbackReply = getFallbackResponse(searchResults);
+      // Bold the AI name in fallback
+      fallbackReply = fallbackReply.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
+      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
@@ -336,7 +351,7 @@ Now respond following this format exactly:`;
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 150,
+              maxOutputTokens: 180,
             },
           }),
         }
@@ -355,19 +370,34 @@ Now respond following this format exactly:`;
         throw new Error("Empty response");
       }
 
-      // Clean up and ensure titles are bolded
-      let cleanText = fullResponse.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
+      // Clean up and ensure proper bolding
+      let cleanText = fullResponse;
       
-      // If no bold tags exist, manually bold titles from search results
-      if (searchResults.length > 0 && askingForContent && !cleanText.includes('<strong>')) {
+      // Bold AI name if mentioned
+      cleanText = cleanText.replace(/MaxMovies AI/gi, '<strong>MaxMovies AI</strong>');
+      cleanText = cleanText.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
+      
+      // Bold creator name if mentioned
+      cleanText = cleanText.replace(/\bMax\b(?![\w])/gi, '<strong>Max</strong>');
+      
+      // Bold movie titles from search results
+      if (searchResults.length > 0 && askingForContent) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
-            const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
-            cleanText = cleanText.replace(regex, '<strong>$1</strong>');
+            const titleRegex = new RegExp(`\\*\\*${escapeRegex(movie.title)}\\*\\*`, 'gi');
+            if (!cleanText.match(titleRegex)) {
+              const plainRegex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
+              cleanText = cleanText.replace(plainRegex, '<strong>$1</strong>');
+            }
           }
         });
       }
+      
+      // Convert markdown bold to HTML
+      cleanText = cleanText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      
+      // Remove any AI/language model mentions
+      cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
       
       // Add clickable links to titles
       if (searchResults.length > 0 && askingForContent) {
@@ -404,7 +434,12 @@ Now respond following this format exactly:`;
       clearTimeout(timeoutId);
       console.error("API error:", fetchError.message);
       
-      const fallbackReply = getFallbackResponse(searchResults);
+      let fallbackReply = getFallbackResponse(searchResults);
+      // Bold the AI name and creator in fallback
+      fallbackReply = fallbackReply.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
+      fallbackReply = fallbackReply.replace(/\bMax\b(?![\w])/g, '<strong>Max</strong>');
+      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
@@ -426,7 +461,7 @@ Now respond following this format exactly:`;
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! I'm **MaxMovies AI**. What movie are you looking for? 🎬"
+      reply: "Hey! I'm **<strong>MaxMovies AI</strong>**. What movie are you looking for? 🎬"
     });
   }
 }
