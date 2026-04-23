@@ -11,13 +11,13 @@ function checkRateLimit(userId) {
   const now = Date.now();
   const userRequests = rateLimitStore.get(userId) || [];
   const recentRequests = userRequests.filter(timestamp => now - timestamp < 30000);
-  
+
   if (recentRequests.length >= 8) {
     const oldestRequest = recentRequests[0];
     const waitTime = Math.ceil((oldestRequest + 30000 - now) / 1000);
     return { allowed: false, waitTime };
   }
-  
+
   recentRequests.push(now);
   rateLimitStore.set(userId, recentRequests);
   return { allowed: true };
@@ -28,27 +28,26 @@ async function searchMaxMovies(query, limit = 5) {
   try {
     const searchUrl = `${MAXMOVIES_API}/search/${encodeURIComponent(query)}`;
     const response = await fetch(searchUrl);
-    
+
     if (!response.ok) return [];
-    
+
     const data = await response.json();
     let items = data?.results?.items || [];
-    
+
     if (items.length === 0) return [];
-    
+
     const validResults = [];
-    
+
     for (const item of items) {
       const coverUrl = item.cover?.url || item.thumbnail || null;
-      
-      // Skip items without valid cover
+
       if (!coverUrl || coverUrl === '' || !coverUrl.startsWith('http')) {
         continue;
       }
-      
+
       let type = 'movie';
       let typeDisplay = 'MOVIE';
-      
+
       if (item.subjectType === 2) {
         type = 'series';
         typeDisplay = 'SERIES';
@@ -56,8 +55,7 @@ async function searchMaxMovies(query, limit = 5) {
         type = 'music';
         typeDisplay = 'MUSIC';
       }
-      
-      // Generate short explanation
+
       let explanation = '';
       if (item.description) {
         explanation = item.description.substring(0, 60);
@@ -70,7 +68,7 @@ async function searchMaxMovies(query, limit = 5) {
       } else {
         explanation = 'Great content';
       }
-      
+
       validResults.push({
         subjectId: item.subjectId,
         title: item.title || 'Untitled',
@@ -81,12 +79,12 @@ async function searchMaxMovies(query, limit = 5) {
         year: item.releaseDate ? new Date(item.releaseDate).getFullYear() : null,
         explanation: explanation
       });
-      
+
       if (validResults.length >= limit) break;
     }
-    
+
     return validResults;
-    
+
   } catch (err) {
     console.error("Search error:", err);
     return [];
@@ -100,27 +98,47 @@ function isAskingAboutIdentity(prompt) {
   return nameKeywords.some(k => lower.includes(k)) || creatorKeywords.some(k => lower.includes(k));
 }
 
+// ✅ FIXED MOVIE DETECTION
 function isExplicitlyAskingForMovies(prompt) {
   const lower = prompt.toLowerCase();
-  
-  // Skip if asking about identity
+
   if (isAskingAboutIdentity(prompt)) return false;
-  
-  // Keywords that explicitly request movie/series search
+
   const movieSearchKeywords = [
-    'recommend', 'suggest', 'search for', 'find me', 'show me',
-    'looking for', 'movie about', 'series about', 'films like',
-    'action movies', 'comedy series', 'horror films', 'kenyan movies'
+    'recommend',
+    'suggest',
+    'search for',
+    'find me',
+    'show me',
+    'looking for',
+    'movie about',
+    'series about',
+    'films like',
+    'what can you say about',
+    'tell me about',
+    'who stars in',
+    'how many seasons',
+    'episodes of',
+    'about this movie',
+    'about this series'
   ];
-  
+
   return movieSearchKeywords.some(k => lower.includes(k));
 }
 
+// ✅ FIXED SEARCH TOPIC EXTRACTION
 function extractSearchTopic(prompt) {
-  let topic = prompt.replace(/recommend|suggest|search for|find me|show me|looking for|movie about|series about|films like/gi, '');
-  topic = topic.replace(/movie|series|film|show/gi, '');
+  let topic = prompt;
+
+  topic = topic.replace(
+    /recommend|suggest|search for|find me|show me|looking for|movie about|series about|films like|what can you say about|tell me about|who stars in|how many seasons|episodes of|about this movie|about this series/gi,
+    ''
+  );
+
+  topic = topic.replace(/\b(movie|series|film|show|bro)\b/gi, '');
   topic = topic.replace(/[?]/g, '');
   topic = topic.trim();
+
   return topic.length >= 2 ? topic : null;
 }
 
@@ -141,14 +159,14 @@ export default async function handler(req, res) {
 
   try {
     const { prompt, userId } = req.body;
-    
+
     if (!prompt || !userId) {
       return res.status(400).json({ error: "Missing prompt or userId." });
     }
 
     const rateCheck = checkRateLimit(userId);
     if (!rateCheck.allowed) {
-      return res.status(429).json({ 
+      return res.status(429).json({
         reply: `⏰ Chill for ${rateCheck.waitTime} seconds bro! 😎`,
         recommendations: []
       });
@@ -156,31 +174,27 @@ export default async function handler(req, res) {
 
     const isIdentityQuestion = isAskingAboutIdentity(prompt);
     const explicitlyAskingForMovies = isExplicitlyAskingForMovies(prompt);
-    
+
     let searchResults = [];
-    
-    // ONLY search if user explicitly asks for movie recommendations
+
     if (explicitlyAskingForMovies && !isIdentityQuestion) {
       const searchTopic = extractSearchTopic(prompt);
       console.log(`Searching for movies: "${searchTopic}"`);
-      
+
       if (searchTopic && searchTopic.length > 2) {
         searchResults = await searchMaxMovies(searchTopic, 5);
       }
-      
+
       if (searchResults.length === 0 && searchTopic) {
         searchResults = await searchMaxMovies('popular', 5);
       }
     }
-    
-    // If we have movie results, return them
+
     if (explicitlyAskingForMovies && searchResults.length > 0) {
       let replyText = `🎬 Here's ${searchResults.map(r => `**${r.title}**${r.year ? ` (${r.year})` : ''}`).join(', ')}. Tap any thumbnail below to watch! 🍿😎`;
-      
-      // Bold formatting
+
       replyText = replyText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      
-      // Add clickable links
+
       searchResults.forEach(movie => {
         if (movie.title) {
           const escapedTitle = escapeRegex(movie.title);
@@ -189,7 +203,7 @@ export default async function handler(req, res) {
           replyText = replyText.replace(boldPattern, link);
         }
       });
-      
+
       const recommendations = searchResults.map(item => ({
         subjectId: item.subjectId,
         title: item.title,
@@ -199,14 +213,13 @@ export default async function handler(req, res) {
         typeDisplay: item.typeDisplay,
         year: item.year
       }));
-      
-      return res.status(200).json({ 
+
+      return res.status(200).json({
         reply: replyText,
         recommendations: recommendations
       });
     }
-    
-    // For all other queries (greetings, general chat, identity questions), use Gemini
+
     if (process.env.GEMINI_API_KEY) {
       try {
         let systemPrompt = `You are MaxMovies AI, a friendly and helpful assistant. 
@@ -229,7 +242,7 @@ Respond naturally:`;
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);
-        
+
         const geminiResponse = await fetch(
           `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
           {
@@ -245,19 +258,18 @@ Respond naturally:`;
             }),
           }
         );
-        
+
         clearTimeout(timeoutId);
-        
+
         if (geminiResponse.ok) {
           const result = await geminiResponse.json();
           let replyText = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          
+
           if (replyText) {
-            // Clean up any unwanted text
             replyText = replyText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
             replyText = replyText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-            
-            return res.status(200).json({ 
+
+            return res.status(200).json({
               reply: replyText,
               recommendations: []
             });
@@ -267,11 +279,10 @@ Respond naturally:`;
         console.error("Gemini error:", error);
       }
     }
-    
-    // Fallback responses for common scenarios
+
     let fallbackReply = "";
     const lowerPrompt = prompt.toLowerCase();
-    
+
     if (lowerPrompt.includes('hello') || lowerPrompt.includes('hi') || lowerPrompt.includes('hey')) {
       fallbackReply = "Hey there! Ready to find some awesome movies? 🎬😎 Just ask me to recommend something!";
     } else if (isIdentityQuestion) {
@@ -285,17 +296,17 @@ Respond naturally:`;
     } else {
       fallbackReply = "Hey! I'm MaxMovies AI. Ask me to recommend movies or series, or just chat with me! 🎬😎";
     }
-    
+
     fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    
-    return res.status(200).json({ 
+
+    return res.status(200).json({
       reply: fallbackReply,
       recommendations: []
     });
-    
+
   } catch (err) {
     console.error("Server error:", err);
-    return res.status(200).json({ 
+    return res.status(200).json({
       reply: "Hey! I'm MaxMovies AI. What's up? 🎬😎",
       recommendations: []
     });
