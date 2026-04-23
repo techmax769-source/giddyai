@@ -5,9 +5,6 @@ const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/
 const MAXMOVIES_API = "https://maxmoviesbackend.vercel.app/api/v2";
 const SITE_URL = "https://maxmovies-254.vercel.app";
 
-// Use in-memory store instead of filesystem for serverless
-const memoryStore = new Map();
-
 const rateLimitStore = new Map();
 
 function checkRateLimit(userId) {
@@ -26,7 +23,7 @@ function checkRateLimit(userId) {
   return { allowed: true };
 }
 
-// 🔍 Search MaxMovies API with more details for explanations
+// 🔍 Search MaxMovies API with strict validation
 async function searchMaxMovies(query, limit = 5) {
   try {
     const searchUrl = `${MAXMOVIES_API}/search/${encodeURIComponent(query)}`;
@@ -39,7 +36,16 @@ async function searchMaxMovies(query, limit = 5) {
     
     if (items.length === 0) return [];
     
-    return items.slice(0, limit).map(item => {
+    const validResults = [];
+    
+    for (const item of items) {
+      const coverUrl = item.cover?.url || item.thumbnail || null;
+      
+      // Skip items without valid cover
+      if (!coverUrl || coverUrl === '' || !coverUrl.startsWith('http')) {
+        continue;
+      }
+      
       let type = 'movie';
       let typeDisplay = 'MOVIE';
       
@@ -51,33 +57,35 @@ async function searchMaxMovies(query, limit = 5) {
         typeDisplay = 'MUSIC';
       }
       
-      // Generate a brief explanation based on available data
+      // Generate short explanation
       let explanation = '';
       if (item.description) {
-        explanation = item.description.substring(0, 80);
+        explanation = item.description.substring(0, 60);
       } else if (item.genre) {
         explanation = `${item.genre} ${typeDisplay.toLowerCase()}`;
-      } else if (item.director) {
-        explanation = `Directed by ${item.director}`;
       } else if (type === 'movie') {
-        explanation = `Exciting movie to watch`;
+        explanation = 'Exciting movie to watch';
       } else if (type === 'series') {
-        explanation = `Amazing series to binge`;
+        explanation = 'Amazing series to binge';
       } else {
-        explanation = `Great ${typeDisplay.toLowerCase()} content`;
+        explanation = 'Great content';
       }
       
-      return {
+      validResults.push({
         subjectId: item.subjectId,
         title: item.title || 'Untitled',
-        cover: item.cover?.url || item.thumbnail || null,
+        cover: coverUrl,
         type: type,
         typeDisplay: typeDisplay,
         rating: item.imdbRatingValue || null,
         year: item.releaseDate ? new Date(item.releaseDate).getFullYear() : null,
         explanation: explanation
-      };
-    });
+      });
+      
+      if (validResults.length >= limit) break;
+    }
+    
+    return validResults;
     
   } catch (err) {
     console.error("Search error:", err);
@@ -85,106 +93,32 @@ async function searchMaxMovies(query, limit = 5) {
   }
 }
 
-// Simple in-memory conversation storage (last 5 messages max)
-function getConversationHistory(userId) {
-  if (!memoryStore.has(userId)) {
-    memoryStore.set(userId, []);
-  }
-  return memoryStore.get(userId);
-}
-
-function addToConversation(userId, role, content) {
-  const history = getConversationHistory(userId);
-  history.push({ role, content });
-  
-  // Keep only last 6 messages (3 exchanges) to prevent token overflow
-  if (history.length > 6) {
-    history.shift();
-  }
-}
-
-function clearOldMemory() {
-  // Clear memories older than 30 minutes
-  const now = Date.now();
-  for (const [userId, data] of memoryStore.entries()) {
-    if (data.timestamp && now - data.timestamp > 1800000) {
-      memoryStore.delete(userId);
-    }
-  }
-}
-
-// Run cleanup every hour
-setInterval(clearOldMemory, 3600000);
-
-// Check if user is asking about identity/creator
 function isAskingAboutIdentity(prompt) {
   const lower = prompt.toLowerCase();
-  
-  const nameKeywords = [
-    'what is your name', 'your name', 'who are you', 'call you', 
-    'what are you', 'introduce yourself', 'tell me about yourself'
-  ];
-  
-  const creatorKeywords = [
-    'who made you', 'who built you', 'who created you', 'your creator',
-    'who developed you', 'who programmed you', 'who is your maker',
-    'who wrote you', 'who designed you', 'who made maxmovies ai',
-    'your developer', 'who is max'
-  ];
-  
-  return nameKeywords.some(keyword => lower.includes(keyword)) || 
-         creatorKeywords.some(keyword => lower.includes(keyword));
+  const nameKeywords = ['what is your name', 'your name', 'who are you', 'call you', 'what are you'];
+  const creatorKeywords = ['who made you', 'who built you', 'who created you', 'your creator', 'who developed you', 'who is max'];
+  return nameKeywords.some(k => lower.includes(k)) || creatorKeywords.some(k => lower.includes(k));
 }
 
-function getIdentityResponse(prompt) {
-  const lower = prompt.toLowerCase();
-  
-  if (lower.includes('what is your name') || lower.includes('your name') || 
-      lower.includes('who are you') || lower.includes('call you')) {
-    return "I'm **MaxMovies AI**! 🎬😎";
-  }
-  
-  if (lower.includes('who made you') || lower.includes('who created you') || 
-      lower.includes('your creator') || lower.includes('who built you') ||
-      lower.includes('who developed you') || lower.includes('who is max')) {
-    return "Created by **Max**, a 21-year-old dev from Kenya! 🎬🔥";
-  }
-  
-  return "I'm **MaxMovies AI**, created by **Max**! 🎬💯";
-}
-
-// Check if user is explicitly asking for movie/series recommendations
 function isAskingForMovies(prompt) {
   const lower = prompt.toLowerCase();
-  
-  // Skip if asking about identity
   if (isAskingAboutIdentity(prompt)) return false;
   
-  // Skip greetings and casual talk
   const greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'how are you', 'what\'s up'];
-  if (greetings.some(g => lower === g || lower.startsWith(g + ' ') || lower.endsWith(' ' + g))) {
+  if (greetings.some(g => lower === g || lower.startsWith(g + ' '))) {
     return false;
   }
   
-  // Keywords that explicitly ask for movie/series content
-  const movieKeywords = [
-    'recommend', 'suggest', 'search', 'find', 'look up', 'show me', 
-    'get me', 'give me', 'movie', 'series', 'film', 'show', 'watch',
-    'stream', 'download', 'action', 'comedy', 'drama', 'horror', 
-    'thriller', 'sci-fi', 'romance', 'documentary', 'anime'
-  ];
-  
-  return movieKeywords.some(keyword => lower.includes(keyword));
+  const movieKeywords = ['recommend', 'suggest', 'search', 'find', 'show me', 'movie', 'series', 'film', 'watch', 'action', 'comedy', 'drama', 'horror', 'thriller', 'kenyan'];
+  return movieKeywords.some(k => lower.includes(k));
 }
 
 function extractSearchTopic(prompt) {
-  let topic = prompt.replace(/recommend|suggest|search|find|look up|show me|get me|give me|watch|stream|download/gi, '');
+  let topic = prompt.replace(/recommend|suggest|search|find|show me|watch/gi, '');
   topic = topic.replace(/movie|series|film|show/gi, '');
   topic = topic.replace(/[?]/g, '');
   topic = topic.trim();
-  
-  if (topic.length < 2) return null;
-  return topic;
+  return topic.length >= 2 ? topic : null;
 }
 
 function escapeRegex(string) {
@@ -196,28 +130,10 @@ function getCoolGreeting() {
     "Yo! Ready to binge? 🎬😎",
     "Hey movie lover! What's good? 🍿🔥",
     "Sup! Got your popcorn ready? 🎬😎",
-    "Hello! Looking for something lit? 🔥💯",
     "Hey hey! Movie time? 🎬🍿",
-    "Yo yo! What we watching today? 😎🎬",
-    "Sup fam! Need some recommendations? 🔥💪"
+    "Yo yo! What we watching today? 😎🎬"
   ];
   return greetings[Math.floor(Math.random() * greetings.length)];
-}
-
-function getFallbackResponse(searchResults) {
-  if (searchResults && searchResults.length > 0) {
-    let response = "🎬 **Here's what I found:**\n\n";
-    searchResults.slice(0, 5).forEach((result) => {
-      response += `**${result.title}**`;
-      if (result.year) response += ` (${result.year})`;
-      if (result.rating) response += ` ⭐ ${result.rating}`;
-      response += ` - ${result.explanation}\n`;
-    });
-    response += `\nTap any thumbnail below to watch! 🍿😎`;
-    return response;
-  }
-  
-  return getCoolGreeting();
 }
 
 export default async function handler(req, res) {
@@ -241,238 +157,147 @@ export default async function handler(req, res) {
     const rateCheck = checkRateLimit(userId);
     if (!rateCheck.allowed) {
       return res.status(429).json({ 
-        error: `⏰ Chill for ${rateCheck.waitTime} seconds, bro! 😎`,
-        reply: `⏰ Please wait ${rateCheck.waitTime} seconds.`
+        reply: `⏰ Chill for ${rateCheck.waitTime} seconds bro! 😎`
       });
     }
-
-    // Add user message to conversation
-    addToConversation(userId, "user", prompt);
 
     const isIdentityQuestion = isAskingAboutIdentity(prompt);
     const askingForMovies = isAskingForMovies(prompt);
     
     let searchResults = [];
+    let replyText = "";
     
-    // ONLY search if user explicitly asks for movies/series
-    if (askingForMovies && !isIdentityQuestion) {
-      const searchTopic = extractSearchTopic(prompt);
-      console.log(`Searching for movies: "${searchTopic}"`);
+    // Handle identity questions
+    if (isIdentityQuestion) {
+      if (prompt.toLowerCase().includes('name') || prompt.toLowerCase().includes('who are you')) {
+        replyText = "I'm **MaxMovies AI**! 🎬😎";
+      } else {
+        replyText = "Created by **Max**, a 21-year-old dev from Kenya! 🎬🔥";
+      }
       
-      if (searchTopic && searchTopic.length > 2) {
+      return res.status(200).json({ 
+        reply: replyText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+        recommendations: []
+      });
+    }
+    
+    // Handle greetings
+    if (!askingForMovies) {
+      replyText = getCoolGreeting();
+      return res.status(200).json({ 
+        reply: replyText,
+        recommendations: []
+      });
+    }
+    
+    // Search for movies
+    if (askingForMovies) {
+      const searchTopic = extractSearchTopic(prompt);
+      console.log(`Searching: "${searchTopic}"`);
+      
+      if (searchTopic) {
         searchResults = await searchMaxMovies(searchTopic, 5);
       }
       
-      if (searchResults.length === 0 && searchTopic) {
-        searchResults = await searchMaxMovies('popular', 5);
+      if (searchResults.length === 0) {
+        replyText = "Hmm... couldn't find that one. Try something else? 🎬😅";
+        return res.status(200).json({ 
+          reply: replyText,
+          recommendations: []
+        });
       }
-    }
-
-    // Handle identity questions
-    if (isIdentityQuestion) {
-      let identityReply = getIdentityResponse(prompt);
-      // Bold the names
-      identityReply = identityReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      addToConversation(userId, "assistant", identityReply);
       
-      return res.status(200).json({ 
-        reply: identityReply,
-        recommendations: []
-      });
-    }
+      // Build response using Gemini but with strict instructions
+      if (process.env.GEMINI_API_KEY) {
+        try {
+          const promptText = `You are MaxMovies AI. User asked: "${prompt}"
 
-    // Handle simple greetings - no movies, just cool responses
-    if (!askingForMovies && !isIdentityQuestion) {
-      const greeting = getCoolGreeting();
-      addToConversation(userId, "assistant", greeting);
-      
-      return res.status(200).json({ 
-        reply: greeting,
-        recommendations: []
-      });
-    }
+Found these movies/series (ONLY use these, DO NOT invent others):
+${searchResults.map((r, i) => `${i+1}. ${r.title} (${r.year || 'N/A'}) - ${r.explanation}`).join('\n')}
 
-    // If asking for movies but no results found
-    if (askingForMovies && searchResults.length === 0) {
-      const noResultsReply = "Hmm... couldn't find that one. Try something else? 🎬😅";
-      addToConversation(userId, "assistant", noResultsReply);
-      
-      return res.status(200).json({ 
-        reply: noResultsReply,
-        recommendations: []
-      });
-    }
-
-    // Get conversation history
-    const history = getConversationHistory(userId);
-    let conversationContext = "";
-    if (history.length > 1) {
-      const lastMessages = history.slice(-4);
-      conversationContext = "\nPrevious:\n";
-      lastMessages.forEach(msg => {
-        if (msg.role === "user") {
-          conversationContext += `User: ${msg.content}\n`;
-        } else {
-          conversationContext += `AI: ${msg.content}\n`;
-        }
-      });
-    }
-
-    let searchContext = "";
-    if (searchResults.length > 0) {
-      searchContext = "\nMovies/Series found (MUST bold every title using **Title**):\n";
-      searchResults.forEach((result, index) => {
-        searchContext += `${index + 1}. **${result.title}**`;
-        if (result.year) searchContext += ` (${result.year})`;
-        if (result.rating) searchContext += ` ⭐${result.rating}`;
-        searchContext += ` - ${result.explanation}\n`;
-      });
-    }
-
-    const promptText = `${conversationContext}
-User: "${prompt}"
-
-${searchContext}
-
-CRITICAL FORMATTING RULES:
-- **MUST bold EVERY movie/series title** using **Title** format
-- Format: "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Brief explanation."
-- Keep to 2 sentences max
-- NO greetings, NO introductions, JUST the movies with bold titles
-- Example: "🎬 Here's **Inception** (2010) - Mind-bending dream thriller. **The Dark Knight** (2008) - Epic Batman story."
+STRICT RULES:
+- ONLY mention the movies/series from the list above
+- Format: "🎬 Here's **Title** (Year) - Brief explanation. **Title2** (Year) - Brief explanation."
+- MAX 2 sentences
+- NO extra text, NO greetings, NO introductions
+- DO NOT mention being an AI
+- DO NOT add any movie not in the list
 
 Response:`;
 
-    // Use a simple response if no API key
-    if (!process.env.GEMINI_API_KEY) {
-      let fallbackReply = getFallbackResponse(searchResults);
-      // Ensure bold formatting
-      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      addToConversation(userId, "assistant", fallbackReply);
-      
-      return res.status(200).json({ 
-        reply: fallbackReply,
-        recommendations: searchResults.slice(0, 5).map(item => ({
-          subjectId: item.subjectId,
-          title: item.title,
-          cover: item.cover,
-          rating: item.rating,
-          type: item.type,
-          typeDisplay: item.typeDisplay,
-          year: item.year,
-          explanation: item.explanation
-        }))
-      });
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    try {
-      const geminiResponse = await fetch(
-        `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [{ 
-              role: "user", 
-              parts: [{ text: promptText }] 
-            }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 180,
-            },
-          }),
-        }
-      );
-
-      clearTimeout(timeoutId);
-
-      if (!geminiResponse.ok) {
-        throw new Error(`API returned ${geminiResponse.status}`);
-      }
-
-      const result = await geminiResponse.json();
-      let fullResponse = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-      if (!fullResponse) {
-        throw new Error("Empty response");
-      }
-
-      // Clean up and ensure bold formatting
-      let cleanText = fullResponse;
-      
-      // Convert markdown bold to HTML
-      cleanText = cleanText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      
-      // Remove any unnecessary text
-      cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
-      cleanText = cleanText.replace(/^Hey.*?\.\s*/i, '');
-      cleanText = cleanText.replace(/^Hello.*?\.\s*/i, '');
-      cleanText = cleanText.replace(/^Yo.*?\.\s*/i, '');
-      
-      // If no bold tags exist, manually bold titles from search results
-      if (searchResults.length > 0 && !cleanText.includes('<strong>')) {
-        searchResults.forEach(movie => {
-          if (movie.title && movie.title.length > 2) {
-            const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
-            cleanText = cleanText.replace(regex, '<strong>$1</strong>');
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          
+          const geminiResponse = await fetch(
+            `${GEMINI_API_URL}?key=${process.env.GEMINI_API_KEY}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: promptText }] }],
+                generationConfig: {
+                  temperature: 0.3,
+                  maxOutputTokens: 120,
+                },
+              }),
+            }
+          );
+          
+          clearTimeout(timeoutId);
+          
+          if (geminiResponse.ok) {
+            const result = await geminiResponse.json();
+            let aiReply = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            
+            if (aiReply && !aiReply.includes('**') && searchResults.length > 0) {
+              // Manually add bold formatting if AI didn't
+              searchResults.forEach(movie => {
+                const regex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
+                aiReply = aiReply.replace(regex, '**$1**');
+              });
+            }
+            
+            replyText = aiReply || `🎬 Here's ${searchResults.map(r => `**${r.title}** (${r.year || ''})`).join(', ')}. Tap below to watch! 🍿😎`;
+          } else {
+            throw new Error('API failed');
           }
-        });
+        } catch (error) {
+          console.error("Gemini error:", error);
+          // Fallback to manual response
+          replyText = `🎬 Here's ${searchResults.map(r => `**${r.title}**${r.year ? ` (${r.year})` : ''}`).join(', ')}. Tap any thumbnail below to watch! 🍿😎`;
+        }
+      } else {
+        // Manual response without Gemini
+        replyText = `🎬 Here's ${searchResults.map(r => `**${r.title}**${r.year ? ` (${r.year})` : ''}`).join(', ')}. Tap any thumbnail below to watch! 🍿😎`;
       }
+      
+      // Bold formatting
+      replyText = replyText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       
       // Add clickable links
-      if (searchResults.length > 0) {
-        searchResults.forEach(movie => {
-          if (movie.title && movie.title.length > 2) {
-            const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
-            const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
-            cleanText = cleanText.replace(boldPattern, link);
-          }
-        });
-      }
+      searchResults.forEach(movie => {
+        if (movie.title) {
+          const escapedTitle = escapeRegex(movie.title);
+          const boldPattern = new RegExp(`<strong>${escapedTitle}</strong>`, 'gi');
+          const link = `<a href="${SITE_URL}/#detail/${movie.subjectId}" target="_blank" style="color: #3b82f6; text-decoration: none; font-weight: 600;">${movie.title}</a>`;
+          replyText = replyText.replace(boldPattern, link);
+        }
+      });
       
-      // Add to conversation history
-      addToConversation(userId, "assistant", cleanText);
-
-      const recommendations = searchResults.slice(0, 5).map(item => ({
+      const recommendations = searchResults.map(item => ({
         subjectId: item.subjectId,
         title: item.title,
         cover: item.cover,
         rating: item.rating,
         type: item.type,
         typeDisplay: item.typeDisplay,
-        year: item.year,
-        explanation: item.explanation
+        year: item.year
       }));
-
+      
       return res.status(200).json({ 
-        reply: cleanText,
+        reply: replyText,
         recommendations: recommendations
-      });
-      
-    } catch (fetchError) {
-      clearTimeout(timeoutId);
-      console.error("API error:", fetchError.message);
-      
-      let fallbackReply = getFallbackResponse(searchResults);
-      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      addToConversation(userId, "assistant", fallbackReply);
-      
-      return res.status(200).json({ 
-        reply: fallbackReply,
-        recommendations: searchResults.length > 0 ? searchResults.slice(0, 5).map(item => ({
-          subjectId: item.subjectId,
-          title: item.title,
-          cover: item.cover,
-          rating: item.rating,
-          type: item.type,
-          typeDisplay: item.typeDisplay,
-          year: item.year,
-          explanation: item.explanation
-        })) : []
       });
     }
     
