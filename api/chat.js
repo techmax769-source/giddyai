@@ -54,7 +54,7 @@ async function searchMaxMovies(query, limit = 5) {
       // Generate a brief explanation based on available data
       let explanation = '';
       if (item.description) {
-        explanation = item.description.substring(0, 100);
+        explanation = item.description.substring(0, 80);
       } else if (item.genre) {
         explanation = `${item.genre} ${typeDisplay.toLowerCase()}`;
       } else if (item.director) {
@@ -141,36 +141,44 @@ function getIdentityResponse(prompt) {
   
   if (lower.includes('what is your name') || lower.includes('your name') || 
       lower.includes('who are you') || lower.includes('call you')) {
-    return "I'm **<strong>MaxMovies AI</strong>**! Your friendly movie buddy from MaxMovies website. 🎬";
+    return "I'm MaxMovies AI! 🎬";
   }
   
   if (lower.includes('who made you') || lower.includes('who created you') || 
       lower.includes('your creator') || lower.includes('who built you') ||
       lower.includes('who developed you') || lower.includes('who is max')) {
-    return "I was created by **<strong>Max</strong>**, a 21-year-old developer from Kenya! He built me to be your ultimate movie buddy. 🎬";
+    return "Created by Max, a 21-year-old dev from Kenya! 🎬";
   }
   
-  return "I'm **<strong>MaxMovies AI</strong>**, your movie buddy from MaxMovies website! Created by **<strong>Max</strong>**, a 21-year-old dev from Kenya. 🎬";
+  return "I'm MaxMovies AI, created by Max! 🎬";
 }
 
-// Check if user is asking for movie/series content
-function isAskingForContent(prompt) {
+// Check if user is explicitly asking for movie/series recommendations
+function isAskingForMovies(prompt) {
   const lower = prompt.toLowerCase();
   
+  // Skip if asking about identity
   if (isAskingAboutIdentity(prompt)) return false;
   
-  const contentKeywords = [
-    'watch', 'see', 'show me', 'find', 'search', 'look up', 'get me', 'give me',
-    'recommend', 'suggest', 'tell me about', 'movie', 'series', 'film', 'show',
-    'episode', 'season', 'stream', 'download', 'play', 'action', 'comedy', 
-    'drama', 'horror', 'thriller', 'sci-fi', 'romance'
+  // Skip greetings and casual talk
+  const greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'how are you', 'what\'s up'];
+  if (greetings.some(g => lower === g || lower.startsWith(g + ' ') || lower.endsWith(' ' + g))) {
+    return false;
+  }
+  
+  // Keywords that explicitly ask for movie/series content
+  const movieKeywords = [
+    'recommend', 'suggest', 'search', 'find', 'look up', 'show me', 
+    'get me', 'give me', 'movie', 'series', 'film', 'show', 'watch',
+    'stream', 'download', 'action', 'comedy', 'drama', 'horror', 
+    'thriller', 'sci-fi', 'romance', 'documentary', 'anime'
   ];
   
-  return contentKeywords.some(keyword => lower.includes(keyword));
+  return movieKeywords.some(keyword => lower.includes(keyword));
 }
 
 function extractSearchTopic(prompt) {
-  let topic = prompt.replace(/what is|tell me about|search for|find|look up|show me|recommend|suggest|watch|see|stream|download|play/gi, '');
+  let topic = prompt.replace(/recommend|suggest|search|find|look up|show me|get me|give me|watch|stream|download/gi, '');
   topic = topic.replace(/movie|series|film|show/gi, '');
   topic = topic.replace(/[?]/g, '');
   topic = topic.trim();
@@ -183,24 +191,30 @@ function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function getSimpleGreeting() {
+  const greetings = [
+    "Hey! 🎬",
+    "What's up? 🎬",
+    "Yo! 🎬",
+    "Hello! 🎬"
+  ];
+  return greetings[Math.floor(Math.random() * greetings.length)];
+}
+
 function getFallbackResponse(searchResults) {
   if (searchResults && searchResults.length > 0) {
-    let response = "🎬 **Here's what I found:**\n\n";
+    let response = "🎬 Here's what I found:\n\n";
     searchResults.slice(0, 5).forEach((result) => {
-      response += `**${result.title}**`;
+      response += `${result.title}`;
       if (result.year) response += ` (${result.year})`;
       if (result.rating) response += ` ⭐ ${result.rating}`;
-      response += `\n`;
-      if (result.explanation) {
-        response += `${result.explanation}\n`;
-      }
-      response += `\n`;
+      response += ` - ${result.explanation}\n`;
     });
-    response += `Tap any thumbnail below to watch! 🍿`;
+    response += `\nTap any thumbnail below to watch! 🍿`;
     return response;
   }
   
-  return "Hey! I'm **MaxMovies AI**. Ask me to find a movie or series for you! 🎬";
+  return getSimpleGreeting();
 }
 
 export default async function handler(req, res) {
@@ -233,13 +247,14 @@ export default async function handler(req, res) {
     addToConversation(userId, "user", prompt);
 
     const isIdentityQuestion = isAskingAboutIdentity(prompt);
-    const askingForContent = isAskingForContent(prompt);
+    const askingForMovies = isAskingForMovies(prompt);
     
     let searchResults = [];
     
-    if (askingForContent && !isIdentityQuestion) {
+    // ONLY search if user explicitly asks for movies/series
+    if (askingForMovies && !isIdentityQuestion) {
       const searchTopic = extractSearchTopic(prompt);
-      console.log(`Searching for: "${searchTopic}"`);
+      console.log(`Searching for movies: "${searchTopic}"`);
       
       if (searchTopic && searchTopic.length > 2) {
         searchResults = await searchMaxMovies(searchTopic, 5);
@@ -250,14 +265,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // Handle identity questions immediately
+    // Handle identity questions
     if (isIdentityQuestion) {
-      let identityReply = getIdentityResponse(prompt);
-      // Ensure bolding works in the response
-      identityReply = identityReply.replace(/\*\*<strong>(.*?)<\/strong>\*\*/g, '<strong>$1</strong>');
-      identityReply = identityReply.replace(/<strong>/g, '<strong>');
-      identityReply = identityReply.replace(/<\/strong>/g, '</strong>');
-      
+      const identityReply = getIdentityResponse(prompt);
       addToConversation(userId, "assistant", identityReply);
       
       return res.status(200).json({ 
@@ -266,12 +276,34 @@ export default async function handler(req, res) {
       });
     }
 
-    // Get conversation history (last 4 messages for context)
+    // Handle simple greetings - no movies
+    if (!askingForMovies && !isIdentityQuestion) {
+      const greeting = getSimpleGreeting();
+      addToConversation(userId, "assistant", greeting);
+      
+      return res.status(200).json({ 
+        reply: greeting,
+        recommendations: []
+      });
+    }
+
+    // If asking for movies but no results found
+    if (askingForMovies && searchResults.length === 0) {
+      const noResultsReply = "Sorry, couldn't find any movies matching that. Try something else? 🎬";
+      addToConversation(userId, "assistant", noResultsReply);
+      
+      return res.status(200).json({ 
+        reply: noResultsReply,
+        recommendations: []
+      });
+    }
+
+    // Get conversation history
     const history = getConversationHistory(userId);
     let conversationContext = "";
     if (history.length > 1) {
       const lastMessages = history.slice(-4);
-      conversationContext = "\nPrevious conversation:\n";
+      conversationContext = "\nPrevious:\n";
       lastMessages.forEach(msg => {
         if (msg.role === "user") {
           conversationContext += `User: ${msg.content}\n`;
@@ -282,41 +314,32 @@ export default async function handler(req, res) {
     }
 
     let searchContext = "";
-    if (searchResults.length > 0 && askingForContent) {
-      searchContext = "\nFound these movies/series with details - provide a brief explanation for each:\n";
+    if (searchResults.length > 0) {
+      searchContext = "\nMovies/Series found:\n";
       searchResults.forEach((result, index) => {
-        searchContext += `${index + 1}. **${result.title}**`;
+        searchContext += `${index + 1}. ${result.title}`;
         if (result.year) searchContext += ` (${result.year})`;
         if (result.rating) searchContext += ` ⭐${result.rating}`;
-        searchContext += `\n   Brief explanation: ${result.explanation}\n`;
+        searchContext += ` - ${result.explanation}\n`;
       });
     }
 
     const promptText = `${conversationContext}
-Current user question: "${prompt}"
+User: "${prompt}"
 
 ${searchContext}
 
-IMPORTANT RULES:
-1. **Bold ALL movie/series titles** using **Title** format
-2. **Bold your name** as **MaxMovies AI** whenever you mention yourself
-3. **Bold the creator name** as **Max** whenever you mention the developer
-4. Provide a VERY BRIEF explanation (5-10 words) for EACH movie/series you mention
-5. Keep total response to 2-3 sentences maximum
-6. Use this exact format:
-   "🎬 Here's **Movie Title** (Year) - Brief explanation. **Another Movie** (Year) - Quick description."
+INSTRUCTIONS:
+- ONLY respond with the movies/series listed above
+- Format: "🎬 Here's **Title** (Year) - Brief explanation. **Title2** (Year) - Brief explanation."
+- Keep to 2 sentences max
+- NO greetings, NO introductions, JUST the movies
 
-Example: "🎬 Here's **Inception** (2010) - Dream heist thriller. **The Dark Knight** (2008) - Batman vs Joker epic."
-
-Now respond following these rules exactly. Remember to bold titles, your name, and creator name:`;
+Response:`;
 
     // Use a simple response if no API key
     if (!process.env.GEMINI_API_KEY) {
-      let fallbackReply = getFallbackResponse(searchResults);
-      // Bold the AI name in fallback
-      fallbackReply = fallbackReply.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
-      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      
+      const fallbackReply = getFallbackResponse(searchResults);
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
@@ -351,7 +374,7 @@ Now respond following these rules exactly. Remember to bold titles, your name, a
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 180,
+              maxOutputTokens: 150,
             },
           }),
         }
@@ -370,37 +393,20 @@ Now respond following these rules exactly. Remember to bold titles, your name, a
         throw new Error("Empty response");
       }
 
-      // Clean up and ensure proper bolding
+      // Clean up
       let cleanText = fullResponse;
-      
-      // Bold AI name if mentioned
-      cleanText = cleanText.replace(/MaxMovies AI/gi, '<strong>MaxMovies AI</strong>');
-      cleanText = cleanText.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
-      
-      // Bold creator name if mentioned
-      cleanText = cleanText.replace(/\bMax\b(?![\w])/gi, '<strong>Max</strong>');
-      
-      // Bold movie titles from search results
-      if (searchResults.length > 0 && askingForContent) {
-        searchResults.forEach(movie => {
-          if (movie.title && movie.title.length > 2) {
-            const titleRegex = new RegExp(`\\*\\*${escapeRegex(movie.title)}\\*\\*`, 'gi');
-            if (!cleanText.match(titleRegex)) {
-              const plainRegex = new RegExp(`(${escapeRegex(movie.title)})`, 'gi');
-              cleanText = cleanText.replace(plainRegex, '<strong>$1</strong>');
-            }
-          }
-        });
-      }
       
       // Convert markdown bold to HTML
       cleanText = cleanText.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       
-      // Remove any AI/language model mentions
+      // Remove any unnecessary text
       cleanText = cleanText.replace(/as an ai|as an AI|language model|gemini|google/gi, '');
+      cleanText = cleanText.replace(/^Hey.*?\.\s*/i, '');
+      cleanText = cleanText.replace(/^Hello.*?\.\s*/i, '');
+      cleanText = cleanText.replace(/^Yo.*?\.\s*/i, '');
       
-      // Add clickable links to titles
-      if (searchResults.length > 0 && askingForContent) {
+      // Add clickable links
+      if (searchResults.length > 0) {
         searchResults.forEach(movie => {
           if (movie.title && movie.title.length > 2) {
             const boldPattern = new RegExp(`<strong>${escapeRegex(movie.title)}</strong>`, 'gi');
@@ -413,17 +419,16 @@ Now respond following these rules exactly. Remember to bold titles, your name, a
       // Add to conversation history
       addToConversation(userId, "assistant", cleanText);
 
-      const recommendations = (askingForContent && searchResults.length > 0) ? 
-        searchResults.slice(0, 5).map(item => ({
-          subjectId: item.subjectId,
-          title: item.title,
-          cover: item.cover,
-          rating: item.rating,
-          type: item.type,
-          typeDisplay: item.typeDisplay,
-          year: item.year,
-          explanation: item.explanation
-        })) : [];
+      const recommendations = searchResults.slice(0, 5).map(item => ({
+        subjectId: item.subjectId,
+        title: item.title,
+        cover: item.cover,
+        rating: item.rating,
+        type: item.type,
+        typeDisplay: item.typeDisplay,
+        year: item.year,
+        explanation: item.explanation
+      }));
 
       return res.status(200).json({ 
         reply: cleanText,
@@ -434,34 +439,28 @@ Now respond following these rules exactly. Remember to bold titles, your name, a
       clearTimeout(timeoutId);
       console.error("API error:", fetchError.message);
       
-      let fallbackReply = getFallbackResponse(searchResults);
-      // Bold the AI name and creator in fallback
-      fallbackReply = fallbackReply.replace(/MaxMovies AI/g, '<strong>MaxMovies AI</strong>');
-      fallbackReply = fallbackReply.replace(/\bMax\b(?![\w])/g, '<strong>Max</strong>');
-      fallbackReply = fallbackReply.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      
+      const fallbackReply = getFallbackResponse(searchResults);
       addToConversation(userId, "assistant", fallbackReply);
       
       return res.status(200).json({ 
         reply: fallbackReply,
-        recommendations: (askingForContent && searchResults.length > 0) ?
-          searchResults.slice(0, 5).map(item => ({
-            subjectId: item.subjectId,
-            title: item.title,
-            cover: item.cover,
-            rating: item.rating,
-            type: item.type,
-            typeDisplay: item.typeDisplay,
-            year: item.year,
-            explanation: item.explanation
-          })) : []
+        recommendations: searchResults.length > 0 ? searchResults.slice(0, 5).map(item => ({
+          subjectId: item.subjectId,
+          title: item.title,
+          cover: item.cover,
+          rating: item.rating,
+          type: item.type,
+          typeDisplay: item.typeDisplay,
+          year: item.year,
+          explanation: item.explanation
+        })) : []
       });
     }
     
   } catch (err) {
     console.error("Server error:", err);
     return res.status(200).json({ 
-      reply: "Hey! I'm **<strong>MaxMovies AI</strong>**. What movie are you looking for? 🎬"
+      reply: "Hey! 🎬"
     });
   }
 }
